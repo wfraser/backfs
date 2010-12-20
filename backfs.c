@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -48,9 +49,26 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    printf("cache size %lu bytes\n%lu files\n"
-        ,cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks
-        ,cachedir_statvfs.f_files
+    uint64_t cache_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
+
+    double cache_human = (double)cache_size;
+    char *cache_units;
+    if (cache_size > 1024 * 1024 * 1024) {
+        cache_human /= 1024*1024*1024;
+        cache_units = "GiB";
+    } else if (cache_size > 1024 * 1024) {
+        cache_human /= 1024*1024;
+        cache_units = "MiB";
+    } else if (cache_size > 1024) {
+        cache_human /= 1024;
+        cache_units = "KiB";
+    } else {
+        cache_units = "B";
+    }
+
+    printf("cache size %.2lf %s\n"
+        , cache_human
+        , cache_units
     );
 
     //fuse_main(argc, argv, &BackFS_Opers, NULL);
