@@ -2,7 +2,8 @@
 #define BACKFS_CACHE_WRF_H
 
 #include <stdlib.h>
+#include <stdint.h>
 
-void filename_hash(char *filename, size_t len, char hash[9]);
+uint32_t sfh(char *data, size_t len);
 
 #endif //BACKFS_CACHE_WRF_H

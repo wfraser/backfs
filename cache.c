@@ -68,9 +68,4 @@ uint32_t sfh(char *data, size_t len)
     return hash;
 }
 
-void filename_hash(char *filename, size_t len, char hash[9])
-{
-    uint32_t h = sfh(filename, len);
-    snprintf(hash, 9, "%08x", h);
-}
 
