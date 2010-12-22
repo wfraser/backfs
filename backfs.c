@@ -1,4 +1,5 @@
 // this needs to be first
+#define _GNU_SOURCE
 #include <fuse.h>
 #include <fuse_opt.h>
 
@@ -13,24 +14,32 @@
 #include <fcntl.h>
 #include <sys/statvfs.h>
 
+#include <pthread.h>
+
 #include "cache.h"
 
-struct backfs { char *cache_dir; };
+struct backfs { 
+    char *cache_dir;
+    unsigned long long cache_size;
+    pthread_mutex_t lock;
+};
+
 static struct backfs backfs;
 #define BACKFS_OPT(t,p,v) { t, offsetof(struct 
 static struct fuse_opt backfs_opts[] = {
-    {"cache=%s", offsetof(struct backfs, cache_dir), 0}
+    {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
+    {"cache_size=%llu", offsetof(struct backfs, cache_size),    0}
 };
-
-int backfs_open_common(const char *path, mode_t mode, struct fuse_file_info *fi)
-{
-    //TODO
-    return 0;
-}
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
-    return backfs_open_common(path, 0, fi);
+    fprintf(stderr, "open %s\n", path);
+
+    if ((fi->flags & 3) != O_RDONLY) {
+        return -EACCES;
+    }
+
+    return -ENOENT;
 }
 
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
@@ -71,11 +80,12 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 perror("read from cache failed");
             }
             // need to do a real read
+            //TODO
         }
         buf_offset += block_size;
     }
 
-    return 0;
+    return size;
 }
 
 static struct fuse_operations BackFS_Opers = {
@@ -94,7 +104,7 @@ int main(int argc, char **argv)
     }
 
     if (backfs.cache_dir == NULL) {
-        fprintf(stderr, "you need to specify a cache location with \"-o cache\"\n");
+        fprintf(stderr, "error: you need to specify a cache location with \"-o cache\"\n");
         return -1;
     }
 
@@ -103,17 +113,35 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    uint64_t cache_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
+    uint64_t device_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
+    
+    if (device_size < backfs.cache_size) {
+        fprintf(stderr, "error: specified cache size larger than device\ndevice is %llu bytes, but %llu bytes were specified.\n",
+                (unsigned long long) device_size, backfs.cache_size);
+        return -1;
+    }
 
-    double cache_human = (double)cache_size;
+    bool use_whole_device = false;
+    if (backfs.cache_size == 0) {
+        use_whole_device = true;
+        backfs.cache_size = device_size;
+    }
+
+    if (backfs.cache_size < BUCKET_MAX_SIZE) {
+        fprintf(stderr, "error: refusing to use cache of size less than %llu bytes\n",
+                (unsigned long long) BUCKET_MAX_SIZE);
+        return -1;
+    }
+
+    double cache_human = (double)(backfs.cache_size);
     char *cache_units;
-    if (cache_size > 1024 * 1024 * 1024) {
+    if (backfs.cache_size >= 1024 * 1024 * 1024) {
         cache_human /= 1024*1024*1024;
         cache_units = "GiB";
-    } else if (cache_size > 1024 * 1024) {
+    } else if (backfs.cache_size >= 1024 * 1024) {
         cache_human /= 1024*1024;
         cache_units = "MiB";
-    } else if (cache_size > 1024) {
+    } else if (backfs.cache_size >= 1024) {
         cache_human /= 1024;
         cache_units = "KiB";
     } else {
@@ -125,7 +153,7 @@ int main(int argc, char **argv)
         , cache_units
     );
 
-    cache_init(backfs.cache_dir, cache_size);
+    cache_init(backfs.cache_dir, backfs.cache_size, use_whole_device);
 
     //fuse_main(argc, argv, &BackFS_Opers, NULL);
 

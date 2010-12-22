@@ -3,11 +3,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <fcntl.h>
+
+#include <pthread.h>
+static pthread_mutex_t lock;
 
 #undef get16bits
 #if (defined(__GNUC__) && defined(__i386__)) || defined(__WATCOMC__) \
@@ -20,25 +25,74 @@
 
 char *cache_dir;
 uint64_t cache_size;
+uint64_t cache_used_size;
+bool use_whole_device;
 uint32_t next_bucket_number;
 struct bucket_list free_buckets;
 struct bucket_list bqueue;
 struct bht_entry *bht[BHT_SIZE];
+struct bht_entry *filehash[BHT_SIZE];
 
 /*
  * Initialize the cache.
  */
-void cache_init(const char *a_cache_dir, uint64_t a_cache_size)
+void cache_init(const char *a_cache_dir, uint64_t a_cache_size, bool a_use_whole_device)
 {
+    use_whole_device = a_use_whole_device;
     cache_dir = (char*)malloc(strlen(a_cache_dir)+1);
     strcpy(cache_dir, a_cache_dir);
     cache_size = a_cache_size;
+    cache_used_size = 0;
     next_bucket_number = 0;
     free_buckets.head = NULL;
     free_buckets.tail = NULL;
     bqueue.head = NULL;
     bqueue.tail = NULL;
     memset(bht, 0, sizeof(bht));
+    memset(filehash, 0, sizeof(filehash));
+}
+
+int cache_delete(const char *filename)
+{
+    uint32_t hash = sfh(filename, strlen(filename));
+    struct bht_entry *e = filehash[hash % BHT_SIZE];
+    while (e != NULL) {
+        if (strcmp(e->filename, filename) == 0)
+            break;
+        e = e->next;
+    }
+    if (e == NULL) {
+        fprintf(stderr, "can't remove %s from the cache; it's not in there.\n", filename);
+        errno = ENOENT;
+        return -1;
+    }
+
+    struct bucket *b = e->bucket;
+    // [cache_dir]/buckets/%010u
+    char *cachefile = (char*)malloc(strlen(cache_dir) + 9 + 10 + 1);
+    while (b != NULL) {
+        snprintf(cachefile, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu",
+                cache_dir, (unsigned long) b->number);
+        unlink(cachefile);
+        cache_used_size -= b->size;
+
+        // remove bucket to the tail of the free_buckets queue
+        
+        if (b->prev)
+            b->prev->next = b->next;
+        if (b->next)
+            b->next->prev = b->prev;
+
+        b->prev = free_buckets.tail;
+        if (free_buckets.tail)
+            free_buckets.tail->next = b;
+        free_buckets.tail = b;
+        b->next = NULL;
+
+        b = b->file_next;
+    }
+
+    return 0;
 }
 
 /*
@@ -68,9 +122,12 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     fprintf(stderr, "getting block %lu of file %s: hash %08lx\n", 
             (unsigned long) block, filename, (unsigned long) hash);
 
+    //###
+    pthread_mutex_lock(&lock);
+
     struct bht_entry *e = bht[hash % BHT_SIZE];
     while (e != NULL) {
-        if (e->hash == hash)
+        if (strcmp(e->filename, filename) == 0)
             break;
         e = e->next;
     }
@@ -130,7 +187,81 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     close(fd);
 
+    pthread_mutex_unlock(&lock);
+    //###
+
     return 0;
+}
+
+struct bht_entry *new_bht_entry()
+{
+    struct bht_entry *e = (struct bht_entry *)malloc(sizeof(struct bht_entry));
+    return e;
+}
+
+struct bucket *new_bucket()
+{
+    struct bucket *b = (struct bucket *)malloc(sizeof(struct bucket));
+    return b;
+}
+
+void make_space_available(uint64_t bytes_needed)
+{
+    struct statvfs svfs;
+    if (statvfs(cache_dir, &svfs) == -1) {
+        perror("in make_space_available: unable to stat filesystem!! ");
+        return;
+    }
+
+    // free space is either the free space on the device,
+    //   or the free space allowed to us,
+    //   whichever is less.
+
+    uint64_t device_free = (uint64_t) svfs.f_bsize * svfs.f_bfree;
+    uint64_t bytes_free;
+
+    if (!use_whole_device) {
+        uint64_t cache_free = cache_size - cache_used_size;
+        if (cache_free > device_free) {
+            fprintf(stderr, "WARNING: limited by device free space! "
+                    "Cache should have %llu bytes free, but device only has %llu bytes.\n",
+                    (unsigned long long) cache_free, (unsigned long long) device_free);
+        }
+
+        bytes_free = (cache_free < device_free) ? cache_free : device_free;
+    } else {
+        bytes_free = device_free;
+    }
+
+    if (bytes_free >= bytes_needed) {
+        return;
+    }
+
+    uint64_t bytes_to_free = bytes_needed - bytes_free;
+    uint64_t bytes_freed = 0;
+    struct bucket *b = bqueue.tail;
+    char *cache_filename = (char*)malloc(strlen(cache_dir)+9+10+1);
+    while (bytes_freed < bytes_to_free) {
+        fprintf(stderr, "freeing %llu bytes in bucket #%lu\n", 
+                (unsigned long long) b->size, (unsigned long) b->number);
+        snprintf(cache_filename, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu", 
+                cache_dir, (unsigned long) b->number);
+        unlink(cache_filename);
+        bytes_freed += b->size;
+        cache_used_size -= b->size;
+
+        // take the bucket off the bqueue tail and make it the free_buckets tail
+        
+        b->prev->next = NULL;
+        bqueue.tail = b->prev;
+        
+        b->prev = free_buckets.tail;
+        free_buckets.tail->next = b;
+        free_buckets.tail = b;
+
+        b = bqueue.tail;
+    }
+    fprintf(stderr, "freed %llu bytes\n", (unsigned long long) bytes_freed);
 }
 
 /*
@@ -160,13 +291,18 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     fprintf(stderr, "cache file: %s, hash %08lx\n",
             cachefile, (unsigned long) hash);
 
+    //###
+    pthread_mutex_lock(&lock);
+
     struct bht_entry *e = bht[hash % BHT_SIZE];
     if (e == NULL) {
-        e = (struct bht_entry *)malloc(sizeof(struct bht_entry));
+        // hash table entry is empty
+        e = new_bht_entry();
         bht[hash % BHT_SIZE] = e;
+        e->prev = NULL;
     } else {
         while (e->next != NULL) {
-            if (e->hash == hash) {
+            if (strcmp(e->filename, filename) == 0) {
                 fprintf(stderr, "block already exists in cache: #%lu\n",
                         (unsigned long) e->bucket->number);
                 // move bucket to front of queue
@@ -175,16 +311,24 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
                 e->bucket->prev = NULL;
                 e->bucket->next = old_head;
                 old_head->prev = e->bucket;
+                pthread_mutex_unlock(&lock);
                 return 0;
             }
             e = e->next;
         }
-        e->next = (struct bht_entry *)malloc(sizeof(struct bht_entry));
+        // e is now tail of hashtable entry list
+        e->next = new_bht_entry();
+        e->next->prev = e;
         e = e->next;
     }
 
-    e->hash = hash;
+    e->filename = (char*)malloc(strlen(filename)+1);
+    strcpy(e->filename, filename);
     e->next = NULL;
+
+    make_space_available(len);
+
+    // grab a bucket
     if (free_buckets.head != free_buckets.tail) {
         // re-use a free bucket
         fprintf(stderr, "re-using free bucket #%u\n",
@@ -197,10 +341,12 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     } else {
         // create a new bucket
         fprintf(stderr, "making new bucket #%u\n", next_bucket_number);
-        e->bucket = (struct bucket *)malloc(sizeof(struct bucket));
+        e->bucket = new_bucket();
         e->bucket->number = next_bucket_number++;
     }
 
+    cache_used_size += len;
+    e->bucket->bht_entry = e;
     e->bucket->size = len;
     e->bucket->next = NULL;
     e->bucket->prev = bqueue.head;
@@ -209,12 +355,32 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         bqueue.head = e->bucket;
     }
 
+    // add to chain for filename
+    struct bucket *b = e->bucket;
+    hash = sfh(filename, strlen(filename));
+    e = filehash[hash % BHT_SIZE];
+    while (e != NULL && strcmp(e->filename, filename) != 0) {
+        e = e->next;
+    }
+    if (e == NULL) {
+        // new file to the cache
+        e = new_bht_entry();
+        e->filename = (char*)malloc(strlen(filename)+1);
+        strcpy(e->filename, filename);
+        e->prev = NULL;
+        e->next = NULL;
+        e->bucket = b;
+        filehash[hash % BHT_SIZE] = e;
+    }
+    e->bucket->file_next = e->bucket;
+
     int fd = open(cachefile, O_WRONLY | O_CREAT | O_EXCL, 0660);
     if (fd == -1) {
         perror("error opening cache file");
         errno = EBADF;
         free(fileandblock);
         free(cachefile);
+        pthread_mutex_unlock(&lock);
         return -1;
     }
 
@@ -225,6 +391,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         free(fileandblock);
         free(cachefile);
         close(fd);
+        pthread_mutex_unlock(&lock);
         return -1;
     }
     if (bytes_written != len) {
@@ -233,9 +400,14 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         free(fileandblock);
         free(cachefile);
         close(fd);
+        pthread_mutex_unlock(&lock);
+        return -1;
     }
 
     close(fd);
+
+    pthread_mutex_unlock(&lock);
+    //###
 
     return 0;
 }
@@ -245,7 +417,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
  * from http://www.azillionmonkeys.com/qed/hash.html
  * LGPL 2.1
  */
-uint32_t sfh(char *data, size_t len)
+uint32_t sfh(const char *data, size_t len)
 {
     uint32_t hash = len;
     uint32_t tmp;
