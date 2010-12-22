@@ -33,7 +33,7 @@ struct bht_entry {
 void cache_init(const char *cache_dir, uint64_t cache_size, 
         bool use_whole_device);
 int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
-        char *buf, uint64_t len);
+        char *buf, uint64_t len, uint64_t *bytes_read);
 int cache_add(const char *filename, uint32_t block, char *buf, 
         uint64_t len);
 int cache_delete(const char *filename);

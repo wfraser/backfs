@@ -62,7 +62,7 @@ int cache_delete(const char *filename)
         e = e->next;
     }
     if (e == NULL) {
-        fprintf(stderr, "can't remove %s from the cache; it's not in there.\n", filename);
+        fprintf(stderr, "BackFS CACHE: can't remove %s from the cache; it's not in there.\n", filename);
         errno = ENOENT;
         return -1;
     }
@@ -105,7 +105,7 @@ int cache_delete(const char *filename)
  * In particular, if the block is not in the cache, sets ENOENT
  */
 int cache_fetch(const char *filename, uint32_t block, uint64_t offset, 
-        char *buf, uint64_t len)
+        char *buf, uint64_t len, uint64_t *bytes_read)
 {
     if (offset + len > BUCKET_MAX_SIZE || filename == NULL) {
         errno = EINVAL;
@@ -119,7 +119,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     fl = snprintf(f, fl, "%s/%010lu", filename, (unsigned long)block);
     uint32_t hash = sfh(f, fl);
 
-    fprintf(stderr, "getting block %lu of file %s: hash %08lx\n", 
+    fprintf(stderr, "BackFS CACHE: getting block %lu of file %s: hash %08lx\n", 
             (unsigned long) block, filename, (unsigned long) hash);
 
     //###
@@ -133,56 +133,66 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     }
 
     if (e == NULL) {
-        fprintf(stderr, "block not in cache\n");
+        fprintf(stderr, "BackFS CACHE: block not in cache\n");
         errno = ENOENT;
         free(f);
+        pthread_mutex_unlock(&lock);
         return -1;
     }
 
     if (e->bucket->size < offset) {
-        fprintf(stderr, "offset for read is past the end\n");
-        errno = ENXIO;
+        fprintf(stderr, "BackFS CACHE: offset for read is past the end\n");
         free(f);
-        return -1;
+        pthread_mutex_unlock(&lock);
+        *bytes_read = 0;
+        return 0;
     }
 
+    /*
     if (e->bucket->size - offset < len) {
-        fprintf(stderr, "length + offset for read is past the end\n");
+        fprintf(stderr, "BackFS CACHE: length + offset for read is past the end\n");
         errno = ENXIO;
         free(f);
+        pthread_mutex_unlock(&lock);
         return -1;
     }
+    */
 
     // [cache_dir]/buckets/%010u
     char *cachefile = (char*)malloc(strlen(cache_dir) + 9 + 10 + 1);
     snprintf(cachefile, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu", 
-           cache_dir, (unsigned long) block);
-    fprintf(stderr, "reading from %s\n", cachefile);
+           cache_dir, (unsigned long) e->bucket->number);
+    fprintf(stderr, "BackFS CACHE: reading from %s\n", cachefile);
     int fd = open(cachefile, O_RDONLY);
     if (fd == -1) {
-        perror("error opening file from cache dir");
+        perror("BackFS Cache ERROR: error opening file from cache dir");
         errno = EBADF;
         free(f);
         free(cachefile);
+        pthread_mutex_unlock(&lock);
         return -1;
     }
 
-    ssize_t bytes_read = pread(fd, buf, len, offset);
-    if (bytes_read == -1) {
-        perror("error reading file from cache dir");
+    *bytes_read = pread(fd, buf, len, offset);
+    if (*bytes_read == -1) {
+        perror("BackFS Cache ERROR: error reading file from cache dir");
         errno = EIO;
         free(f);
         free(cachefile);
         close(fd);
         return -1;
+        pthread_mutex_unlock(&lock);
     }
-    if (bytes_read != len) {
-        fprintf(stderr, "read fewer than requested bytes from cache file");
+    if (*bytes_read != len) {
+        fprintf(stderr, "BackFS CACHE: read fewer than requested bytes from cache file: %lu instead of %lu\n", *bytes_read, len);
+        /*
         errno = EIO;
         free(f);
         free(cachefile);
         close(fd);
+        pthread_mutex_unlock(&lock);
         return -1;
+        */
     }
 
     close(fd);
@@ -209,7 +219,7 @@ void make_space_available(uint64_t bytes_needed)
 {
     struct statvfs svfs;
     if (statvfs(cache_dir, &svfs) == -1) {
-        perror("in make_space_available: unable to stat filesystem!! ");
+        perror("BackFS Cache ERROR: in make_space_available: unable to stat filesystem!! ");
         return;
     }
 
@@ -223,7 +233,7 @@ void make_space_available(uint64_t bytes_needed)
     if (!use_whole_device) {
         uint64_t cache_free = cache_size - cache_used_size;
         if (cache_free > device_free) {
-            fprintf(stderr, "WARNING: limited by device free space! "
+            fprintf(stderr, "BackFS CACHE: WARNING: limited by device free space! "
                     "Cache should have %llu bytes free, but device only has %llu bytes.\n",
                     (unsigned long long) cache_free, (unsigned long long) device_free);
         }
@@ -242,7 +252,7 @@ void make_space_available(uint64_t bytes_needed)
     struct bucket *b = bqueue.tail;
     char *cache_filename = (char*)malloc(strlen(cache_dir)+9+10+1);
     while (bytes_freed < bytes_to_free) {
-        fprintf(stderr, "freeing %llu bytes in bucket #%lu\n", 
+        fprintf(stderr, "BackFS CACHE: freeing %llu bytes in bucket #%lu\n", 
                 (unsigned long long) b->size, (unsigned long) b->number);
         snprintf(cache_filename, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu", 
                 cache_dir, (unsigned long) b->number);
@@ -261,7 +271,7 @@ void make_space_available(uint64_t bytes_needed)
 
         b = bqueue.tail;
     }
-    fprintf(stderr, "freed %llu bytes\n", (unsigned long long) bytes_freed);
+    fprintf(stderr, "BackFS CACHE: freed %llu bytes\n", (unsigned long long) bytes_freed);
 }
 
 /*
@@ -280,16 +290,9 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     char *fileandblock = (char*)malloc(strlen(filename) + 12);
     size_t fl = snprintf(fileandblock, strlen(filename)+12, "%s/%010lu",
             filename, (unsigned long) block);
+    fprintf(stderr, "BackFS CACHE: adding %s to cache\n", fileandblock);
 
     uint32_t hash = sfh(fileandblock, fl);
-
-    // [cache_dir]/buckets/%010u
-    char *cachefile = (char*)malloc(strlen(cache_dir) + 9 + 10 + 1);
-    snprintf(cachefile, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu",
-            cache_dir, (unsigned long) block);
-
-    fprintf(stderr, "cache file: %s, hash %08lx\n",
-            cachefile, (unsigned long) hash);
 
     //###
     pthread_mutex_lock(&lock);
@@ -303,7 +306,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     } else {
         while (e->next != NULL) {
             if (strcmp(e->filename, filename) == 0) {
-                fprintf(stderr, "block already exists in cache: #%lu\n",
+                fprintf(stderr, "BackFS CACHE: block already exists in cache: #%lu\n",
                         (unsigned long) e->bucket->number);
                 // move bucket to front of queue
                 struct bucket *old_head = bqueue.head;
@@ -331,7 +334,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     // grab a bucket
     if (free_buckets.head != free_buckets.tail) {
         // re-use a free bucket
-        fprintf(stderr, "re-using free bucket #%u\n",
+        fprintf(stderr, "BackFS CACHE: re-using free bucket #%u\n",
                 free_buckets.head->number);
         e->bucket = free_buckets.head;
         free_buckets.head = free_buckets.head->next;
@@ -340,7 +343,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         }
     } else {
         // create a new bucket
-        fprintf(stderr, "making new bucket #%u\n", next_bucket_number);
+        fprintf(stderr, "BackFS CACHE: making new bucket #%u\n", next_bucket_number);
         e->bucket = new_bucket();
         e->bucket->number = next_bucket_number++;
     }
@@ -374,9 +377,18 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     }
     e->bucket->file_next = e->bucket;
 
+    // [cache_dir]/buckets/%010u
+    char *cachefile = (char*)malloc(strlen(cache_dir) + 9 + 10 + 1);
+    snprintf(cachefile, strlen(cache_dir)+9+10+1, "%s/buckets/%010lu",
+            cache_dir, (unsigned long) b->number);
+
+    fprintf(stderr, "BackFS CACHE: cache file: %s, hash %08lx\n",
+            cachefile, (unsigned long) hash);
+
+
     int fd = open(cachefile, O_WRONLY | O_CREAT | O_EXCL, 0660);
     if (fd == -1) {
-        perror("error opening cache file");
+        perror("BackFS Cache ERROR: error opening cache file");
         errno = EBADF;
         free(fileandblock);
         free(cachefile);
@@ -386,7 +398,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     ssize_t bytes_written = write(fd, buf, len);
     if (bytes_written == -1) {
-        perror("error writing cache file");
+        perror("BackFS Cache ERROR: error writing cache file");
         errno = EIO;
         free(fileandblock);
         free(cachefile);
@@ -395,7 +407,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         return -1;
     }
     if (bytes_written != len) {
-        fprintf(stderr, "not all bytes written to cache!\n");
+        fprintf(stderr, "BackFS CACHE: not all bytes written to cache!\n");
         errno = EIO;
         free(fileandblock);
         free(cachefile);
