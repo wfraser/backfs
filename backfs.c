@@ -22,12 +22,66 @@ static struct fuse_opt backfs_opts[] = {
     {"cache=%s", offsetof(struct backfs, cache_dir), 0}
 };
 
-/*
+int backfs_open_common(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+    //TODO
+    return 0;
+}
+
+int backfs_open(const char *path, struct fuse_file_info *fi)
+{
+    return backfs_open_common(path, 0, fi);
+}
+
+int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
+        struct fuse_file_info *fi)
+{
+    fprintf(stderr, "reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
+            offset, offset+size, (unsigned long)BUCKET_MAX_SIZE);
+
+    uint32_t first_block = offset / BUCKET_MAX_SIZE;
+    uint32_t last_block = (offset+size) / BUCKET_MAX_SIZE;
+    uint32_t block;
+    size_t buf_offset = 0;
+    for (block = first_block; block <= last_block; block++) {
+        off_t block_offset;
+        size_t block_size;
+
+        if (block == first_block) {
+            block_offset = offset - block * BUCKET_MAX_SIZE;
+        } else {
+            block_offset = 0;
+        }
+
+        if (block == last_block) {
+            block_size = (offset + size) - (block * BUCKET_MAX_SIZE);
+        } else {
+            block_size = BUCKET_MAX_SIZE - block_offset;
+        }
+
+        fprintf(stderr, "reading block %lu, 0x%lx to 0x%lx\n",
+                (unsigned long) block, block_offset, block_offset + block_size);
+
+        int result = cache_fetch(path, block, block_offset, 
+                rbuf + buf_offset, block_size);
+        if (result == -1) {
+            if (errno == ENOENT) {
+                // not an error
+            } else {
+                perror("read from cache failed");
+            }
+            // need to do a real read
+        }
+        buf_offset += block_size;
+    }
+
+    return 0;
+}
+
 static struct fuse_operations BackFS_Opers = {
     .open       = backfs_open,
     .read       = backfs_read,
 };
-*/
 
 int main(int argc, char **argv)
 {
@@ -70,6 +124,8 @@ int main(int argc, char **argv)
         , cache_human
         , cache_units
     );
+
+    cache_init(backfs.cache_dir, cache_size);
 
     //fuse_main(argc, argv, &BackFS_Opers, NULL);
 
