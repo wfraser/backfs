@@ -39,7 +39,26 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
         return -EACCES;
     }
 
-    return -ENOENT;
+    //TODO
+    //return -ENOENT;
+    return 0;
+}
+
+int backfs_getattr(const char *path, struct stat *stbuf)
+{
+    //TODO
+    fprintf(stderr, "getattr %s\n", path);
+    memset(stbuf, 0, sizeof(struct stat));
+    if (strcmp(path, "/") == 0) {
+        stbuf->st_mode = S_IFDIR || 0755;
+        stbuf->st_nlink = 2;
+    } else {
+        stbuf->st_mode = S_IFREG || 0444;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = 100;
+    }
+
+    return 0;
 }
 
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
@@ -88,9 +107,27 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
     return size;
 }
 
+int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+        off_t offset, struct fuse_file_info *fi)
+{
+    //TODO
+    fprintf(stderr, "readdir %s\n", path);
+    if (strcmp(path, "/") != 0)
+        return -ENOENT;
+
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
+    filler(buf, "one.txt", NULL, 0);
+    filler(buf, "two.txt", NULL, 0);
+
+    return 0;
+}
+
 static struct fuse_operations BackFS_Opers = {
     .open       = backfs_open,
     .read       = backfs_read,
+    .readdir    = backfs_readdir,
+    .getattr    = backfs_getattr
 };
 
 int main(int argc, char **argv)
@@ -155,7 +192,9 @@ int main(int argc, char **argv)
 
     cache_init(backfs.cache_dir, backfs.cache_size, use_whole_device);
 
-    //fuse_main(argc, argv, &BackFS_Opers, NULL);
+    printf("%s %s\n", args.argv[1], args.argv[2]);
+
+    fuse_main(args.argc, args.argv, &BackFS_Opers);
 
     return 0;
 }
