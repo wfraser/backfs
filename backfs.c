@@ -55,6 +55,13 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
 {
     fprintf(stderr, "BackFS: open %s\n", path);
 
+    if (strcmp("/.backfs_control", path) == 0) {
+        if ((fi->flags & 3) != O_WRONLY)
+            return -EACCES;
+        else
+            return 0;
+    }
+
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
     struct stat stbuf;
@@ -71,10 +78,59 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
     return 0;
 }
 
+int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
+        struct fuse_file_info *fi)
+{
+    if (strcmp(path, "/.backfs_control") != 0) {
+        return -EACCES;
+    }
+
+    char *data = (char*)malloc(len+1);
+    memcpy(data, buf, len);
+    data[len] = '\0';
+
+    char command[20];
+    char *c = command;
+    while (*data != ' ' && *data != '\n' && *data != '\0') {
+        *c = *data;
+        c++;
+        data++;
+    }
+
+    *c = '\0';
+    if (*data == ' ' || *data == '\n')
+        data++;
+
+    fprintf(stderr, "BackFS: command(%s) data(%s)\n", command, data);
+
+    if (strcmp(command, "test") == 0) {
+        // nonsensical error "Cross-device link"
+        return -EXDEV;
+    } else if (strcmp(command, "noop") == 0) {
+        // test command; do nothing
+    } else {
+        return -EBADMSG;
+    }
+
+    return len;
+}
+
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
-    //TODO
     fprintf(stderr, "BackFS: getattr %s\n", path);
+
+    if (strcmp(path, "/.backfs_control") == 0) {
+        memset(stbuf, 0, sizeof(struct stat));
+        stbuf->st_mode = S_IFREG | 0200;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = 0;
+        stbuf->st_uid = 0;
+        stbuf->st_gid = 0;
+        stbuf->st_atime = 0;
+        stbuf->st_mtime = 0;
+        stbuf->st_ctime = 0;
+        return 0;
+    }
 
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
@@ -249,6 +305,11 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
 
+    // fs control handle
+    if (strcmp("/", path) == 0) {
+        filler(buf, ".backfs_control", NULL, 0);
+    }
+
     int res;
     struct dirent *entry = malloc(offsetof(struct dirent, d_name) + pathconf(real, _PC_NAME_MAX) + 1);
     struct dirent *rp;
@@ -275,7 +336,8 @@ static struct fuse_operations BackFS_Opers = {
     .opendir    = backfs_opendir,
     .readdir    = backfs_readdir,
     .getattr    = backfs_getattr,
-    .access     = backfs_access
+    .access     = backfs_access,
+    .write      = backfs_write
 };
 
 int backfs_opt_proc(void *data, const char *arg, int key, 
