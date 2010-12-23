@@ -1,3 +1,8 @@
+/*
+ * BackFS
+ * Copyright (c) 2010 William R. Fraser
+ */
+
 // this needs to be first
 #define _GNU_SOURCE
 #include <fuse.h>
@@ -50,6 +55,21 @@ static struct fuse_opt backfs_opts[] = {
     FUSE_OPT_KEY("--version",   KEY_VERSION),
     FUSE_OPT_END
 };
+
+void usage()
+{
+    fprintf(stderr, 
+        "usage: backfs [-o <options>] <mount point>\n"
+        "\n"
+        "BackFS options:\n"
+        "    -o cache               cache location (REQUIRED)\n"
+        "    -o backing_fs          backing filesystem location (REQUIRED)\n"
+        "    -o cache_size          maximum size for the cache (0)\n"
+        "                           (default is for cache to grow to fill the device\n"
+        "                              it is on)\n"
+        "\n"
+    );
+}
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
@@ -352,6 +372,7 @@ int backfs_opt_proc(void *data, const char *arg, int key,
     
     case KEY_HELP:
         fuse_opt_add_arg(outargs, "-ho");
+        usage();
         backfs_fuse_main(outargs->argc, outargs->argv, &BackFS_Opers);
         exit(1);
 
@@ -428,8 +449,6 @@ int main(int argc, char **argv)
     );
 
     cache_init(backfs.cache_dir, backfs.cache_size, use_whole_device);
-
-    printf("%s %s\n", args.argv[1], args.argv[2]);
 
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 
