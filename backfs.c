@@ -398,6 +398,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (backfs.real_root == NULL) {
+        fprintf(stderr, "BackFS: error: you need to specify a backing filesystem with \"-o backing_fs\"\n");
+        return -1;
+    }
+
+    DIR *d;
+    if ((d = opendir(backfs.real_root)) == NULL) {
+        perror("BackFS ERROR: error checking backing filesystem");
+        return 2;
+    }
+    closedir(d);
+
     if (backfs.cache_dir == NULL) {
         fprintf(stderr, "BackFS: error: you need to specify a cache location with \"-o cache\"\n");
         return -1;
@@ -405,7 +417,19 @@ int main(int argc, char **argv)
 
     if (statvfs(backfs.cache_dir, &cachedir_statvfs) == -1) {
         perror("BackFS ERROR: error checking cache dir");
-        return 2;
+        return 3;
+    }
+
+    if (access(backfs.cache_dir, W_OK) == -1) {
+        perror("BackFS ERROR: unable to write to cache dir");
+        return 4;
+    }
+
+    char buckets[PATH_MAX];
+    snprintf(buckets, PATH_MAX, "%s%s", backfs.cache_dir, "/buckets");
+    if (mkdir(buckets, 0700) == -1 && errno != EEXIST) {
+        perror("BackFS ERROR: unable to create cache bucket directory");
+        return 5;
     }
 
     uint64_t device_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
