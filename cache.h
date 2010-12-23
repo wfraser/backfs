@@ -25,6 +25,7 @@ struct bucket_list {
 #define BHT_SIZE 4096
 
 struct bht_entry {
+    uint32_t hash;
     char *filename;
     struct bucket *bucket;
     struct bht_entry *prev, *next;

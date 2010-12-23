@@ -55,14 +55,19 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
 {
     fprintf(stderr, "BackFS: open %s\n", path);
 
+    char real[PATH_MAX];
+    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    struct stat stbuf;
+    int ret = lstat(real, &stbuf);
+    if (ret == -1) {
+        perror("BackFS: lstat returned -1");
+        return -errno;
+    }
+
     if ((fi->flags & 3) != O_RDONLY) {
         return -EACCES;
     }
 
-
-
-    //TODO
-    //return -ENOENT;
     return 0;
 }
 
@@ -73,15 +78,18 @@ int backfs_getattr(const char *path, struct stat *stbuf)
 
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
-    fprintf(stderr, "BackFS: real path: %s, ", real);
     int ret = lstat(real, stbuf);
     
     // no write or exec perms
     stbuf->st_mode &= ~0333;
 
-    fprintf(stderr, "BackFS: mode: %o, retval: %d\n", stbuf->st_mode, ret);
-
-    return ret;
+    if (ret == -1) {
+        perror("BackFS: lstat returned -1");
+        return -errno;
+    } else {
+        fprintf(stderr, "BackFS: mode: %o\n", stbuf->st_mode);
+        return 0;
+    }
 }
 
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
@@ -173,15 +181,18 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 free(block_buf);
 
                 if (nread < block_size) {
-                    fprintf(stderr, "BackFS: read less than requested, %lu instead of %lu\n", (unsigned long) nread, (unsigned long) block_size);
+                    fprintf(stderr, "BackFS: read less than requested, %lu instead of %lu\n", 
+                            (unsigned long) nread, (unsigned long) block_size);
                     bytes_read += nread;
-                    fprintf(stderr, "BackFS: bytes_read=%lu\n", bytes_read);
+                    fprintf(stderr, "BackFS: bytes_read=%lu\n", 
+                            (unsigned long) bytes_read);
                     return bytes_read;
                 } else {
                     fprintf(stderr, "BackFS: %lu bytes for fuse buffer\n",
                             block_size);
                     bytes_read += block_size;
-                    fprintf(stderr, "BackFS: bytes_read=%lu\n", bytes_read);
+                    fprintf(stderr, "BackFS: bytes_read=%lu\n", 
+                            (unsigned long) bytes_read);
                 }
             }
         } else {
@@ -189,7 +200,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             fprintf(stderr, "BackFS: got %lu bytes from cache\n",
                     (unsigned long) bread);
             bytes_read += bread;
-            fprintf(stderr, "BackFS: bytes_read=%lu\n", bytes_read);
+            fprintf(stderr, "BackFS: bytes_read=%lu\n",
+                    (unsigned long) bytes_read);
 
             if (bread < block_size) {
                 // must have read the end of file
@@ -203,19 +215,47 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
     return bytes_read;
 }
 
+int backfs_opendir(const char *path, struct fuse_file_info *fi)
+{
+    fprintf(stderr, "BackFS: opendir %s\n", path);
+
+    char real[PATH_MAX];
+    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+
+    DIR *dir = opendir(real);
+
+    if (dir == NULL) {
+        perror("BackFS: opendir failed");
+        return -errno;
+    }
+
+    fi->fh = (uint64_t) dir;
+
+    return 0;
+}
+
 int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
-    //TODO
     fprintf(stderr, "BackFS: readdir %s\n", path);
-    if (strcmp(path, "/") != 0)
-        return -ENOENT;
 
-    filler(buf, ".", NULL, 0);
-    filler(buf, "..", NULL, 0);
-    filler(buf, "one.txt", NULL, 0);
-    filler(buf, "two.txt", NULL, 0);
-    filler(buf, "feedback.flac", NULL, 0);
+    DIR *dir = (DIR*)(fi->fh);
+
+    if (dir == NULL) {
+        fprintf(stderr, "BackFS: got null dir handle");
+        return -EBADF;
+    }
+
+    char real[PATH_MAX];
+    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+
+    int res;
+    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + pathconf(real, _PC_NAME_MAX) + 1);
+    struct dirent *rp;
+    while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
+        filler(buf, rp->d_name, NULL, 0);
+    }
+    free(entry);
 
     return 0;
 }
@@ -232,6 +272,7 @@ int backfs_access(const char *path, int mode)
 static struct fuse_operations BackFS_Opers = {
     .open       = backfs_open,
     .read       = backfs_read,
+    .opendir    = backfs_opendir,
     .readdir    = backfs_readdir,
     .getattr    = backfs_getattr,
     .access     = backfs_access

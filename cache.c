@@ -83,11 +83,14 @@ int cache_delete(const char *filename)
         if (b->next)
             b->next->prev = b->prev;
 
-        b->prev = free_buckets.tail;
+        b->next = free_buckets.tail;
         if (free_buckets.tail)
-            free_buckets.tail->next = b;
+            free_buckets.tail->prev = b;
         free_buckets.tail = b;
-        b->next = NULL;
+        b->prev = NULL;
+
+        if (free_buckets.head == NULL)
+            free_buckets.head = b;
 
         b = b->file_next;
     }
@@ -110,6 +113,11 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     if (offset + len > BUCKET_MAX_SIZE || filename == NULL) {
         errno = EINVAL;
         return -1;
+    }
+
+    if (len == 0) {
+        *bytes_read = 0;
+        return 0;
     }
 
     // file + block
@@ -249,6 +257,10 @@ void make_space_available(uint64_t bytes_needed)
 
     uint64_t bytes_to_free = bytes_needed - bytes_free;
     uint64_t bytes_freed = 0;
+
+    fprintf(stderr, "BackFS CACHE: %llu bytes free in cache, need to free %llu bytes\n",
+            (unsigned long long) bytes_free, (unsigned long long) bytes_to_free);
+
     struct bucket *b = bqueue.tail;
     char *cache_filename = (char*)malloc(strlen(cache_dir)+9+10+1);
     while (bytes_freed < bytes_to_free) {
@@ -261,14 +273,32 @@ void make_space_available(uint64_t bytes_needed)
         cache_used_size -= b->size;
 
         // take the bucket off the bqueue tail and make it the free_buckets tail
-        
-        b->prev->next = NULL;
-        bqueue.tail = b->prev;
-        
-        b->prev = free_buckets.tail;
-        free_buckets.tail->next = b;
-        free_buckets.tail = b;
 
+        if (b->prev)
+            b->prev->next = NULL;
+        else {
+            fprintf(stderr, "BackFS CACHE: bqueue is emptied by make_space_available!\n");
+            abort();
+        }
+        bqueue.tail = b->prev;
+
+        b->prev = free_buckets.tail;
+        if (b->prev == NULL)
+            free_buckets.head = b;
+        else
+            b->prev->next = b;
+        free_buckets.tail = b;
+       
+        struct bht_entry *e = b->bht_entry;
+        if (e->next)
+            e->next->prev = e->prev;
+        if (e->prev)
+            e->prev->next = e->next;
+        else
+            bht[e->hash % BHT_SIZE] = e->next;
+        //TODO: filehash
+        free(e);
+        
         b = bqueue.tail;
     }
     fprintf(stderr, "BackFS CACHE: freed %llu bytes\n", (unsigned long long) bytes_freed);
@@ -284,6 +314,10 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     if (len > BUCKET_MAX_SIZE) {
         errno = EOVERFLOW;
         return -1;
+    }
+
+    if (len == 0) {
+        return 0;
     }
 
     // /filename/%010lu
@@ -309,12 +343,16 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
                 fprintf(stderr, "BackFS CACHE: block already exists in cache: #%lu\n",
                         (unsigned long) e->bucket->number);
                 // move bucket to front of queue
-                struct bucket *old_head = bqueue.head;
-                bqueue.head = e->bucket;
-                e->bucket->prev = NULL;
-                e->bucket->next = old_head;
-                old_head->prev = e->bucket;
-                pthread_mutex_unlock(&lock);
+                if (bqueue.head != e->bucket) {
+                    struct bucket *old_head = bqueue.head;
+                    bqueue.head = e->bucket;
+                    e->bucket->prev = NULL;
+                    e->bucket->next = old_head;
+                    old_head->prev = e->bucket;
+                    if (old_head->next == NULL)
+                        bqueue.tail = old_head;
+                }
+
                 return 0;
             }
             e = e->next;
@@ -327,6 +365,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     e->filename = (char*)malloc(strlen(filename)+1);
     strcpy(e->filename, filename);
+    e->hash = hash;
     e->next = NULL;
 
     make_space_available(len);
@@ -337,10 +376,12 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         fprintf(stderr, "BackFS CACHE: re-using free bucket #%u\n",
                 free_buckets.head->number);
         e->bucket = free_buckets.head;
+
         free_buckets.head = free_buckets.head->next;
-        if (free_buckets.head != NULL) {
+        if (free_buckets.head != NULL)
             free_buckets.head->prev = NULL;
-        }
+        else
+            free_buckets.tail = NULL;
     } else {
         // create a new bucket
         fprintf(stderr, "BackFS CACHE: making new bucket #%u\n", next_bucket_number);
@@ -353,9 +394,11 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     e->bucket->size = len;
     e->bucket->next = NULL;
     e->bucket->prev = bqueue.head;
-    if (bqueue.head != NULL) {
-        bqueue.head->next = e->bucket;
-        bqueue.head = e->bucket;
+    if (bqueue.head != NULL)
+        bqueue.head->prev = e->bucket;
+    bqueue.head = e->bucket;
+    if (bqueue.tail == NULL) {
+        bqueue.tail = e->bucket;
     }
 
     // add to chain for filename
@@ -370,6 +413,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         e = new_bht_entry();
         e->filename = (char*)malloc(strlen(filename)+1);
         strcpy(e->filename, filename);
+        e->hash = hash;
         e->prev = NULL;
         e->next = NULL;
         e->bucket = b;
