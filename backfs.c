@@ -29,12 +29,13 @@
 #define backfs_fuse_main fuse_main
 #endif
 
-#include "cache.h"
+#include "fscache.h"
 
 struct backfs { 
     char *cache_dir;
     char *real_root;
     unsigned long long cache_size;
+    unsigned long long block_size;
     pthread_mutex_t lock;
 };
 
@@ -49,6 +50,7 @@ static struct fuse_opt backfs_opts[] = {
     {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
+    {"block_size=%llu", offsetof(struct backfs, block_size),    0},
     FUSE_OPT_KEY("-h",          KEY_HELP),
     FUSE_OPT_KEY("--help",      KEY_HELP),
     FUSE_OPT_KEY("-V",          KEY_VERSION),
@@ -415,6 +417,8 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    // TODO: move these to fscache.c?
+
     if (statvfs(backfs.cache_dir, &cachedir_statvfs) == -1) {
         perror("BackFS ERROR: error checking cache dir");
         return 3;
@@ -425,11 +429,21 @@ int main(int argc, char **argv)
         return 4;
     }
 
-    char buckets[PATH_MAX];
-    snprintf(buckets, PATH_MAX, "%s%s", backfs.cache_dir, "/buckets");
-    if (mkdir(buckets, 0700) == -1 && errno != EEXIST) {
+    char buf[PATH_MAX];
+    snprintf(buf, PATH_MAX, "%s%s", backfs.cache_dir, "/buckets");
+    if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache bucket directory");
         return 5;
+    }
+
+    snprintf(buf, PATH_MAX, "%s%s", backfs.cache_dir, "/map");
+    if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
+        perror("BackFS ERROR: unable to create cache map directory");
+        return 6;
+    }
+
+    if (backfs.block_size == 0) {
+        backfs.block_size = 0x100000;    // 1 MiB
     }
 
     uint64_t device_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
@@ -444,12 +458,6 @@ int main(int argc, char **argv)
     if (backfs.cache_size == 0) {
         use_whole_device = true;
         backfs.cache_size = device_size;
-    }
-
-    if (backfs.cache_size < BUCKET_MAX_SIZE) {
-        fprintf(stderr, "BackFS: error: refusing to use cache of size less than %llu bytes\n",
-                (unsigned long long) BUCKET_MAX_SIZE);
-        return -1;
     }
 
     double cache_human = (double)(backfs.cache_size);
@@ -472,7 +480,7 @@ int main(int argc, char **argv)
         , cache_units
     );
 
-    cache_init(backfs.cache_dir, backfs.cache_size, use_whole_device);
+    cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 

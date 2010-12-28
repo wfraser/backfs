@@ -1,9 +1,10 @@
 CFLAGS=-Wall -g3 -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -I/usr/include/fuse
+
 LDFLAGS=-lfuse
 
 all: backfs
 
-backfs: backfs.o cache.o
+backfs: backfs.o fscache.o
 
 clean:
 	rm -f *.o backfs
