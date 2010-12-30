@@ -430,7 +430,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
             cachefile, (unsigned long) hash);
 
 
-    int fd = open(cachefile, O_WRONLY | O_CREAT | O_EXCL, 0660);
+    int fd = open(cachefile, O_WRONLY | O_CREAT | O_TRUNC, 0660);
     if (fd == -1) {
         perror("BackFS Cache ERROR: error opening cache file");
         errno = EBADF;
