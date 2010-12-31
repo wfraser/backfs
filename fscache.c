@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <libgen.h>
 
 #include <pthread.h>
 static pthread_mutex_t lock;
@@ -36,7 +37,8 @@ uint64_t get_cache_used_size(const char *root)
     while (readdir_r(dir, e, &result) == 0 && result != NULL) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
         snprintf(buf, PATH_MAX, "%s/%s/data", root, e->d_name);
-        if (stat(buf, &s) == -1) {
+        s.st_size = 0;
+        if (stat(buf, &s) == -1 && errno != ENOENT) {
             perror("BackFS CACHE ERROR: stat in get_cache_used_size");
             fprintf(stderr, "\tcaused by stat(%s)\n", buf);
             abort();
@@ -93,7 +95,6 @@ char * getlink(const char *base, const char *file)
         }
     } else {
         result[len] = '\0';
-        fprintf(stderr, "getlink: %s, len=%u\n", result, len);
         return result;
     }
 }
@@ -141,6 +142,24 @@ bool file_exists(const char *base, const char *file)
     }
 }
 
+char bucketname_buf[PATH_MAX];
+char * bucketname(const char *path)
+{
+    if (path == NULL) {
+        strcpy(bucketname_buf, "NULL");
+        return bucketname_buf;
+    }
+
+    char *copy = (char*)malloc(strlen(path)+1);
+    strncpy(copy, path, strlen(path)+1);
+
+    strncpy(bucketname_buf, basename(copy), PATH_MAX);
+
+    free(copy);
+
+    return bucketname_buf;
+}
+
 /*
  * don't use this function directly.
  */
@@ -171,6 +190,10 @@ char * next_bucket()
 {
     char *bucket = getlink(cache_dir, "buckets/free_head");
     if (bucket != NULL) {
+        fprintf(stderr, "BackFS CACHE: re-using free bucket %s\n",
+                bucketname(bucket));
+
+        // disconnect from free queue
         char *next = getlink(bucket, "next");
         if (next != NULL) {
             makelink(cache_dir, "buckets/free_head", next);
@@ -181,6 +204,7 @@ char * next_bucket()
             makelink(cache_dir, "buckets/free_tail", NULL);
         }
 
+        // make head of the used queue
         char *head = getlink(cache_dir, "buckets/head");
         if (head != NULL) {
             makelink(head, "prev", bucket);
@@ -190,6 +214,8 @@ char * next_bucket()
         }
 
         makelink(cache_dir, "buckets/head", bucket);
+
+        makelink(bucket, "prev", NULL);
 
         return bucket;
     } else {
@@ -227,7 +253,23 @@ char * next_bucket()
             fclose(f);
         }
 
+        fprintf(stderr, "BackFS CACHE: making new bucket %lu\n",
+                (unsigned long) next);
+
         char *new_bucket = makebucket(next);
+
+        // make head of the used queue
+        char *head = getlink(cache_dir, "buckets/head");
+        if (head != NULL) {
+            makelink(head, "prev", new_bucket);
+            makelink(new_bucket, "next", head);
+        } else {
+            makelink(cache_dir, "buckets/tail", new_bucket);
+        }
+
+        makelink(cache_dir, "buckets/head", new_bucket);
+
+        makelink(new_bucket, "prev", NULL);
 
         return new_bucket;
     }
@@ -384,6 +426,54 @@ uint64_t free_bucket(const char *bucketpath)
     }
 }
 
+void dump_queues()
+{
+    char *bucket = NULL;
+
+    int i;
+    for (i = 0; i < 2; i++) {
+        if (i == 0) {
+            bucket = getlink(cache_dir, "buckets/head");
+            fprintf(stderr, "BackFS Used Bucket Queue:\n");
+        } else {
+            bucket = getlink(cache_dir, "buckets/free_head");
+            fprintf(stderr, "BackFS Free Bucket Queue:\n");
+        }
+
+        if (bucket) {
+            char *p, *n;
+            do {
+                p = getlink(bucket, "prev");
+                n = getlink(bucket, "next");
+                fprintf(stderr, "BackFS: %s <- ", bucketname(p));
+                fprintf(stderr, "%s -> ", bucketname(bucket));
+                fprintf(stderr, "%s\n", bucketname(n));
+                if (bucket && n && strcmp(bucket, n) == 0) {
+                    fprintf(stderr, "BackFS CACHE: ERROR: queue has a loop!\n");
+                    break;
+                }
+                if (bucket) free(bucket);
+                bucket = NULL;
+                if (p) free(p);
+            } while ((n == NULL) ? false : (bucket = n));
+
+            char *tail;
+            if (i == 0)
+                tail = getlink(cache_dir, "buckets/tail");
+            else
+                tail = getlink(cache_dir, "buckets/free_tail");
+
+            if (n && tail && strcmp(n, tail) != 0) {
+                fprintf(stderr, "BackFS: queue doesn't end with the tail!\n"
+                        "\ttail is %s\n", bucketname(tail));
+            }
+            if (bucket) free(bucket);
+            if (tail) free(tail);
+            if (n) free(n);
+        }
+    }
+}
+
 /*
  * Read a block from the cache.
  * Important: you can specify less than one block, but not more.
@@ -483,7 +573,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     }
 
     if (*bytes_read != len) {
-        fprintf(stderr, "BackFS CACHE: read fewer than requested bytes from cache file: %lu instead of %lu\n", *bytes_read, len);
+        fprintf(stderr, "BackFS CACHE: read fewer than requested bytes from cache file: %llu instead of %llu\n", *bytes_read, len);
         /*
         errno = EIO;
         free(f);
@@ -509,7 +599,7 @@ void make_space_available(uint64_t bytes_needed)
     if (bytes_needed == 0)
         return;
 
-    if (cache_size - cache_used_size >= bytes_needed)
+    if (cache_used_size + bytes_needed <= cache_size)
         return;
 
     fprintf(stderr, "BackFS CACHE: need to free %llu bytes\n",
@@ -574,6 +664,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     bucketpath = next_bucket();
 
+    /*
     char *head = getlink(cache_dir, "buckets/head");
     if (head == NULL) {
         makelink(cache_dir, "buckets/head", bucketpath);
@@ -583,6 +674,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         makelink(bucketpath, "next", head);
         makelink(cache_dir, "buckets/head", bucketpath);
     }
+    */
 
     char *filemap = (char*)malloc(strlen(filename) + 4);
     snprintf(filemap, strlen(filename)+4, "map%s", filename);
@@ -633,7 +725,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     char datapath[PATH_MAX];
     snprintf(datapath, PATH_MAX, "%s/data", bucketpath);
 
-    int fd = open(datapath, O_WRONLY | O_CREAT);
+    int fd = open(datapath, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         perror("BackFS CACHE ERROR: open in cache_add");
         fprintf(stderr, "\tcaused by open(%s, O_WRONLY|O_CREAT)\n", datapath);
@@ -663,6 +755,13 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     }
 
     cache_used_size += bytes_written;
+    fprintf(stderr, "BackFS CACHE: size now %llu bytes of %llu bytes (%lf%%)\n",
+            (unsigned long long) cache_used_size,
+            (unsigned long long) cache_size,
+            (double)100 * cache_used_size / cache_size
+    );
+
+    dump_queues();
 
     close(fd);
 
