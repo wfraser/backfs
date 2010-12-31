@@ -160,6 +160,54 @@ char * bucketname(const char *path)
     return bucketname_buf;
 }
 
+void dump_queues()
+{
+    char *bucket = NULL;
+
+    int i;
+    for (i = 0; i < 2; i++) {
+        if (i == 0) {
+            bucket = getlink(cache_dir, "buckets/head");
+            fprintf(stderr, "BackFS Used Bucket Queue:\n");
+        } else {
+            bucket = getlink(cache_dir, "buckets/free_head");
+            fprintf(stderr, "BackFS Free Bucket Queue:\n");
+        }
+
+        if (bucket) {
+            char *p, *n;
+            do {
+                p = getlink(bucket, "prev");
+                n = getlink(bucket, "next");
+                fprintf(stderr, "BackFS: %s <- ", bucketname(p));
+                fprintf(stderr, "%s -> ", bucketname(bucket));
+                fprintf(stderr, "%s\n", bucketname(n));
+                if (bucket && n && strcmp(bucket, n) == 0) {
+                    fprintf(stderr, "BackFS CACHE: ERROR: queue has a loop!\n");
+                    break;
+                }
+                if (bucket) free(bucket);
+                bucket = NULL;
+                if (p) free(p);
+            } while ((n == NULL) ? false : (bucket = n));
+
+            char *tail;
+            if (i == 0)
+                tail = getlink(cache_dir, "buckets/tail");
+            else
+                tail = getlink(cache_dir, "buckets/free_tail");
+
+            if (n && tail && strcmp(n, tail) != 0) {
+                fprintf(stderr, "BackFS: queue doesn't end with the tail!\n"
+                        "\ttail is %s\n", bucketname(tail));
+            }
+            if (bucket) free(bucket);
+            if (tail) free(tail);
+            if (n) free(n);
+        }
+    }
+}
+
 /*
  * don't use this function directly.
  */
@@ -330,6 +378,8 @@ void bucket_to_head(const char *bucketpath)
     free(p);
     free(n);
     free(h);
+
+    dump_queues();
 }
 
 /*
@@ -423,54 +473,6 @@ uint64_t free_bucket(const char *bucketpath)
     } else {
         cache_used_size -= (uint64_t) s.st_size;
         return (uint64_t) s.st_size;
-    }
-}
-
-void dump_queues()
-{
-    char *bucket = NULL;
-
-    int i;
-    for (i = 0; i < 2; i++) {
-        if (i == 0) {
-            bucket = getlink(cache_dir, "buckets/head");
-            fprintf(stderr, "BackFS Used Bucket Queue:\n");
-        } else {
-            bucket = getlink(cache_dir, "buckets/free_head");
-            fprintf(stderr, "BackFS Free Bucket Queue:\n");
-        }
-
-        if (bucket) {
-            char *p, *n;
-            do {
-                p = getlink(bucket, "prev");
-                n = getlink(bucket, "next");
-                fprintf(stderr, "BackFS: %s <- ", bucketname(p));
-                fprintf(stderr, "%s -> ", bucketname(bucket));
-                fprintf(stderr, "%s\n", bucketname(n));
-                if (bucket && n && strcmp(bucket, n) == 0) {
-                    fprintf(stderr, "BackFS CACHE: ERROR: queue has a loop!\n");
-                    break;
-                }
-                if (bucket) free(bucket);
-                bucket = NULL;
-                if (p) free(p);
-            } while ((n == NULL) ? false : (bucket = n));
-
-            char *tail;
-            if (i == 0)
-                tail = getlink(cache_dir, "buckets/tail");
-            else
-                tail = getlink(cache_dir, "buckets/free_tail");
-
-            if (n && tail && strcmp(n, tail) != 0) {
-                fprintf(stderr, "BackFS: queue doesn't end with the tail!\n"
-                        "\ttail is %s\n", bucketname(tail));
-            }
-            if (bucket) free(bucket);
-            if (tail) free(tail);
-            if (n) free(n);
-        }
     }
 }
 
