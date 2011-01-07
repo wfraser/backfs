@@ -20,6 +20,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <limits.h>
 
 #include <pthread.h>
 static pthread_mutex_t lock;
@@ -248,6 +249,59 @@ uint64_t free_bucket(const char *bucketpath)
     } else {
         cache_used_size -= (uint64_t) s.st_size;
         return (uint64_t) s.st_size;
+    }
+}
+
+/*
+ * do not use this function directly
+ */
+void cache_invalidate_bucket(const char *filename, uint32_t block, 
+                                const char *bucket)
+{
+    fprintf(stderr, "BackFS CACHE: invalidating block %lu of file %s\n",
+            (unsigned long) block, filename);
+
+    uint64_t freed_size = free_bucket(bucket);
+
+    fprintf(stderr, "BackFS CACHE: freed %llu bytes in bucket %s\n",
+            (unsigned long long) freed_size,
+            bucketname(bucket));
+}
+
+
+void cache_invalidate(const char *filename, uint32_t block)
+{
+    if (block == UINT_MAX) {
+        // free all blocks
+
+        char mappath[PATH_MAX];
+        snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
+        DIR *d = opendir(mappath);
+        if (d == NULL) {
+            perror("BackFS CACHE ERROR: opendir in cache_invalidate");
+            return;
+        }
+
+        struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
+        struct dirent *result = e;
+        while (readdir_r(d, e, &result) == 0 && result != NULL) {
+            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+
+            char *bucket = fsll_getlink(mappath, e->d_name);
+            sscanf(e->d_name, "%lu", (unsigned long *)&block);
+            
+            cache_invalidate_bucket(filename, block, bucket);
+        }
+    
+    } else {
+
+        char mappath[PATH_MAX];
+        snprintf(mappath, PATH_MAX, "map%s/%lu",
+                filename, (unsigned long) block);
+    
+        char *bucket = fsll_getlink(cache_dir, mappath);
+
+        cache_invalidate_bucket(filename, block, bucket);
     }
 }
 

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #define BUCKET_MAX_SIZE 1048576
 
@@ -16,6 +17,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         char *buf, uint64_t len, uint64_t *bytes_read);
 int cache_add(const char *filename, uint32_t block, char *buf, 
         uint64_t len);
-int cache_delete(const char *filename);
+void cache_invalidate(const char *filename, uint32_t block);
+#define cache_delete(filename) cache_invalidate(filename, UINT_MAX)
 
 #endif //BACKFS_CACHE_WRF_H
