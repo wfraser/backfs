@@ -91,6 +91,7 @@ const char * fsll_basename(const char *path)
 
 void fsll_dump(const char *base, const char *headfile, const char *tailfile)
 {
+#ifdef DEBUG
     char *entry = fsll_getlink(base, headfile);
 
     if (entry) {
@@ -120,6 +121,11 @@ void fsll_dump(const char *base, const char *headfile, const char *tailfile)
         if (tail) free(tail);
         if (n) free(n);
     }
+#else
+    (void)base;
+    (void)headfile;
+    (void)tailfile;
+#endif //DEBUG
 }
 
 /*
