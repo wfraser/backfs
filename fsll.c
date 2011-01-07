@@ -154,12 +154,22 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     char *n = fsll_getlink(path, "next");
     char *p = fsll_getlink(path, "prev");
 
-    if ((p == NULL) ^ (strcmp(t, path) == 0)) {
+    if ((p == NULL) ^ (strcmp(h, path) == 0)) {
         if (p)
-            fprintf(stderr, "FSLL ERROR: tail entry has a prev: %s\n", path);
+            fprintf(stderr, "FSLL ERROR: head entry has a prev: %s\n", path);
         else
-            fprintf(stderr, "FSLL ERROR: entry has no tail but is not tail: %s\n", path);
+            fprintf(stderr, "FSLL ERROR: entry has no prev but is not head: %s\n", path);
+        fsll_dump(base, head, tail);
         // cowardly refusing to break things farther
+        return;
+    }
+
+    if ((n == NULL) ^ (strcmp(t, path) == 0)) {
+        if (n)
+            fprintf(stderr, "FSLL ERROR: tail entry has a next: %s\n", path);
+        else
+            fprintf(stderr, "FSLL ERROR: entry has no next but is not tail: %s\n", path);
+        fsll_dump(base, head, tail);
         return;
     }
 
@@ -177,10 +187,12 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     // element to the head. Use fsll_insert_as_head() for the other case.
     if (h == NULL) {
         fprintf(stderr, "FSLL ERROR: in fsll_to_head, no head found!\n");
+        fsll_dump(base, head, tail);
         return;
     }
     if (t == NULL) {
         fprintf(stderr, "FSLL ERROR: in fsll_to_head, no tail found!\n");
+        fsll_dump(base, head, tail);
         return;
     }
 
@@ -201,6 +213,7 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     // assuming h != NULL
     fsll_makelink(h, "prev", path);
     fsll_makelink(path, "next", h);
+    fsll_makelink(path, "prev", NULL);
     fsll_makelink(base, head, path);
 
     if (h) free(h);

@@ -196,7 +196,7 @@ uint32_t bucket_path_to_number(const char *bucketpath)
     uint32_t number = 0;
     size_t s = strlen(bucketpath);
     size_t i;
-    for (i = 0; i < s; i++) {
+    for (i = 1; i < s; i++) {
         char c = bucketpath[s - i];
         if (c < '0' || c > '9') {
             i--;
