@@ -1,5 +1,9 @@
 #ifndef BACKFS_CACHE_WRF_H
 #define BACKFS_CACHE_WRF_H
+/*
+ * BackFS Filesystem Cache
+ * Copyright (c) 2010-2011 William R. Fraser
+ */
 
 #include <stdlib.h>
 #include <stdint.h>

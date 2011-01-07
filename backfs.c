@@ -1,6 +1,6 @@
 /*
  * BackFS
- * Copyright (c) 2010 William R. Fraser
+ * Copyright (c) 2010-2011 William R. Fraser
  */
 
 // this needs to be first

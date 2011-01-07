@@ -4,7 +4,7 @@ LDFLAGS=-lfuse
 
 all: backfs
 
-backfs: backfs.o fscache.o
+backfs: backfs.o fscache.o fsll.o
 
 clean:
 	rm -f *.o backfs
