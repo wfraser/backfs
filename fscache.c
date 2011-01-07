@@ -277,6 +277,7 @@ void cache_invalidate_file(const char *filename)
     DIR *d = opendir(mappath);
     if (d == NULL) {
         perror("BackFS CACHE ERROR: opendir in cache_invalidate");
+        pthread_mutex_unlock(&lock);
         return;
     }
 
@@ -307,6 +308,7 @@ void cache_invalidate_block(const char *filename, uint32_t block)
     if (bucket == NULL) {
         fprintf(stderr, "BackFS Warning: Cache invalidation: block %lu of file %s doesn't exist.\n",
                 (unsigned long) block, filename);
+        pthread_mutex_unlock(&lock);
         return;
     }
 
