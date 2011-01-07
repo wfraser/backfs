@@ -129,7 +129,7 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
         // nonsensical error "Cross-device link"
         return -EXDEV;
     } else if (strcmp(command, "invalidate") == 0) {
-        cache_delete(data);
+        cache_invalidate_file(data);
     } else if (strcmp(command, "noop") == 0) {
         // test command; do nothing
     } else {

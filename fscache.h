@@ -17,7 +17,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         char *buf, uint64_t len, uint64_t *bytes_read);
 int cache_add(const char *filename, uint32_t block, char *buf, 
         uint64_t len);
-void cache_invalidate(const char *filename, uint32_t block);
-#define cache_delete(filename) cache_invalidate(filename, UINT_MAX)
+void cache_invalidate_block(const char *filename, uint32_t block);
+void cache_invalidate_file(const char *filename);
 
 #endif //BACKFS_CACHE_WRF_H

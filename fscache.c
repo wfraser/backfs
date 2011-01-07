@@ -268,41 +268,51 @@ void cache_invalidate_bucket(const char *filename, uint32_t block,
             bucketname(bucket));
 }
 
-
-void cache_invalidate(const char *filename, uint32_t block)
+void cache_invalidate_file(const char *filename)
 {
-    if (block == UINT_MAX) {
-        // free all blocks
+    pthread_mutex_lock(&lock);
 
-        char mappath[PATH_MAX];
-        snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
-        DIR *d = opendir(mappath);
-        if (d == NULL) {
-            perror("BackFS CACHE ERROR: opendir in cache_invalidate");
-            return;
-        }
+    char mappath[PATH_MAX];
+    snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
+    DIR *d = opendir(mappath);
+    if (d == NULL) {
+        perror("BackFS CACHE ERROR: opendir in cache_invalidate");
+        return;
+    }
 
-        struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
-        struct dirent *result = e;
-        while (readdir_r(d, e, &result) == 0 && result != NULL) {
-            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+    struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
+    struct dirent *result = e;
+    while (readdir_r(d, e, &result) == 0 && result != NULL) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
 
-            char *bucket = fsll_getlink(mappath, e->d_name);
-            sscanf(e->d_name, "%lu", (unsigned long *)&block);
-            
-            cache_invalidate_bucket(filename, block, bucket);
-        }
+        char *bucket = fsll_getlink(mappath, e->d_name);
+        uint32_t block;
+        sscanf(e->d_name, "%lu", (unsigned long *)&block);
     
-    } else {
-
-        char mappath[PATH_MAX];
-        snprintf(mappath, PATH_MAX, "map%s/%lu",
-                filename, (unsigned long) block);
-    
-        char *bucket = fsll_getlink(cache_dir, mappath);
-
         cache_invalidate_bucket(filename, block, bucket);
     }
+
+    pthread_mutex_unlock(&lock);
+}
+
+void cache_invalidate_block(const char *filename, uint32_t block)
+{
+    char mappath[PATH_MAX];
+    snprintf(mappath, PATH_MAX, "map%s/%lu",
+            filename, (unsigned long) block);
+
+    pthread_mutex_lock(&lock);
+    
+    char *bucket = fsll_getlink(cache_dir, mappath);
+    if (bucket == NULL) {
+        fprintf(stderr, "BackFS Warning: Cache invalidation: block %lu of file %s doesn't exist.\n",
+                (unsigned long) block, filename);
+        return;
+    }
+
+    cache_invalidate_bucket(filename, block, bucket);
+
+    pthread_mutex_unlock(&lock);
 }
 
 /*
