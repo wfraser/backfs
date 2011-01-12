@@ -165,7 +165,6 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     stbuf->st_mode &= ~0333;
 
     if (ret == -1) {
-        PERROR("lstat returned -1");
         return -errno;
     } else {
         INFO("BackFS: mode: %o\n", stbuf->st_mode);
