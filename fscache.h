@@ -20,4 +20,19 @@ int cache_add(const char *filename, uint32_t block, char *buf,
 void cache_invalidate_block(const char *filename, uint32_t block);
 void cache_invalidate_file(const char *filename);
 
+#ifndef ERROR
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, "CACHE: " __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "CACHE ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "BackFS CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "BackFS CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "BackFS CACHE: " __VA_ARGS__)
+#define PERROR(msg) perror("BackFS CACHE ERROR: " msg)
+#endif //SYSLOG
+#endif //ERROR
+
 #endif //BACKFS_CACHE_WRF_H

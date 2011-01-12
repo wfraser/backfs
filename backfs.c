@@ -23,6 +23,8 @@
 
 #include <pthread.h>
 
+#include "backfs.h"
+
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
 #else
@@ -75,7 +77,7 @@ void usage()
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
-    fprintf(stderr, "BackFS: open %s\n", path);
+    INFO("BackFS: open %s\n", path);
 
     if (strcmp("/.backfs_control", path) == 0) {
         if ((fi->flags & 3) != O_WRONLY)
@@ -89,7 +91,7 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
     struct stat stbuf;
     int ret = lstat(real, &stbuf);
     if (ret == -1) {
-        perror("BackFS: lstat returned -1");
+        PERROR("lstat returned -1");
         return -errno;
     }
 
@@ -123,7 +125,7 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
     if (*data == ' ' || *data == '\n')
         data++;
 
-    fprintf(stderr, "BackFS: command(%s) data(%s)\n", command, data);
+    INFO("BackFS: command(%s) data(%s)\n", command, data);
 
     if (strcmp(command, "test") == 0) {
         // nonsensical error "Cross-device link"
@@ -141,7 +143,7 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
-    fprintf(stderr, "BackFS: getattr %s\n", path);
+    INFO("BackFS: getattr %s\n", path);
 
     if (strcmp(path, "/.backfs_control") == 0) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -164,10 +166,10 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     stbuf->st_mode &= ~0333;
 
     if (ret == -1) {
-        perror("BackFS: lstat returned -1");
+        PERROR("lstat returned -1");
         return -errno;
     } else {
-        fprintf(stderr, "BackFS: mode: %o\n", stbuf->st_mode);
+        INFO("BackFS: mode: %o\n", stbuf->st_mode);
         return 0;
     }
 }
@@ -204,12 +206,12 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         pthread_mutex_lock(&backfs.lock);
 
         if (first) {
-            fprintf(stderr, "BackFS: reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
+            INFO("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
                     offset, offset+size, (unsigned long)BUCKET_MAX_SIZE);
             first = false;
         }
 
-        fprintf(stderr, "BackFS: reading block %lu, 0x%lx to 0x%lx\n",
+        INFO("reading block %lu, 0x%lx to 0x%lx\n",
                 (unsigned long) block, block_offset, block_offset + block_size);
 
         uint64_t bread = 0;
@@ -219,7 +221,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             if (errno == ENOENT) {
                 // not an error
             } else {
-                perror("BackFS ERROR: read from cache failed");
+                PERROR("read from cache failed");
                 pthread_mutex_unlock(&backfs.lock);
                 return -EIO;
             }
@@ -230,11 +232,11 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
             char real[PATH_MAX];
             snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
-            fprintf(stderr, "BackFS: reading block %lu from real file: %s\n",
+            INFO("reading block %lu from real file: %s\n",
                     (unsigned long) block, real);
             int fd = open(real, O_RDONLY);
             if (fd == -1) {
-                perror("BackFS ERROR: error opening real file");
+                PERROR("error opening real file");
                 pthread_mutex_unlock(&backfs.lock);
                 return -EIO;
             }
@@ -244,13 +246,12 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             int nread = pread(fd, block_buf, BUCKET_MAX_SIZE,
                     BUCKET_MAX_SIZE * block);
             if (nread == -1) {
-                perror("BackFS ERROR: read error on real file");
+                PERROR("read error on real file");
                 pthread_mutex_unlock(&backfs.lock);
                 return -EIO;
             } else {
-                fprintf(stderr, "BackFS: got %lu bytes from real file\n",
-                        (unsigned long) nread);
-                fprintf(stderr, "BackFS: adding to cache\n");
+                INFO("got %lu bytes from real file\n", (unsigned long) nread);
+                INFO("adding to cache\n");
                 cache_add(path, block, block_buf, nread);
 
                 pthread_mutex_unlock(&backfs.lock);
@@ -261,31 +262,27 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 free(block_buf);
 
                 if (nread < block_size) {
-                    fprintf(stderr, "BackFS: read less than requested, %lu instead of %lu\n", 
+                    INFO("read less than requested, %lu instead of %lu\n", 
                             (unsigned long) nread, (unsigned long) block_size);
                     bytes_read += nread;
-                    fprintf(stderr, "BackFS: bytes_read=%lu\n", 
+                    INFO("bytes_read=%lu\n", 
                             (unsigned long) bytes_read);
                     return bytes_read;
                 } else {
-                    fprintf(stderr, "BackFS: %lu bytes for fuse buffer\n",
-                            block_size);
+                    INFO("%lu bytes for fuse buffer\n", block_size);
                     bytes_read += block_size;
-                    fprintf(stderr, "BackFS: bytes_read=%lu\n", 
-                            (unsigned long) bytes_read);
+                    INFO("bytes_read=%lu\n", (unsigned long) bytes_read);
                 }
             }
         } else {
             pthread_mutex_unlock(&backfs.lock);
-            fprintf(stderr, "BackFS: got %lu bytes from cache\n",
-                    (unsigned long) bread);
+            INFO("got %lu bytes from cache\n", (unsigned long) bread);
             bytes_read += bread;
-            fprintf(stderr, "BackFS: bytes_read=%lu\n",
-                    (unsigned long) bytes_read);
+            INFO("bytes_read=%lu\n", (unsigned long) bytes_read);
 
             if (bread < block_size) {
                 // must have read the end of file
-                fprintf(stderr, "BackFS: fewer than requested\n");
+                INFO("fewer than requested\n");
                 return bytes_read;
             }
         }
@@ -297,7 +294,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
 int backfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-    fprintf(stderr, "BackFS: opendir %s\n", path);
+    INFO("opendir %s\n", path);
 
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
@@ -305,7 +302,7 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
     DIR *dir = opendir(real);
 
     if (dir == NULL) {
-        perror("BackFS: opendir failed");
+        PERROR("opendir failed");
         return -errno;
     }
 
@@ -317,12 +314,12 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
 int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
-    fprintf(stderr, "BackFS: readdir %s\n", path);
+    INFO("readdir %s\n", path);
 
     DIR *dir = (DIR*)(fi->fh);
 
     if (dir == NULL) {
-        fprintf(stderr, "BackFS: got null dir handle");
+        ERROR("got null dir handle");
         return -EBADF;
     }
 
@@ -418,6 +415,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "BackFS: error: you need to specify a cache location with \"-o cache\"\n");
         return -1;
     }
+
+#ifdef SYSLOG
+    openlog("BackFS", 0, LOG_USER);
+#endif
 
     // TODO: move these to fscache.c?
 

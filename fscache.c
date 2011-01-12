@@ -35,7 +35,7 @@ uint64_t bucket_max_size;
 
 uint64_t get_cache_used_size(const char *root)
 {
-    fprintf(stderr, "BackFS CACHE: taking inventory of cache directory\n");
+    INFO("taking inventory of cache directory\n");
     uint64_t total = 0;
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
     struct dirent *result = e;
@@ -47,24 +47,23 @@ uint64_t get_cache_used_size(const char *root)
         snprintf(buf, PATH_MAX, "%s/%s/data", root, e->d_name);
         s.st_size = 0;
         if (stat(buf, &s) == -1 && errno != ENOENT) {
-            perror("BackFS CACHE ERROR: stat in get_cache_used_size");
-            fprintf(stderr, "\tcaused by stat(%s)\n", buf);
+            PERROR("stat in get_cache_used_size");
+            ERROR("\tcaused by stat(%s)\n", buf);
             abort();
         }
-        fprintf(stderr, "BackFS CACHE: bucket %s: %llu bytes\n",
+        INFO("bucket %s: %llu bytes\n",
                 e->d_name, (unsigned long long) s.st_size);
         total += s.st_size;
     }
     if (result != NULL) {
-        perror("BackFS CACHE ERROR: readdir in get_cache_used_size");
+        PERROR("readdir in get_cache_used_size");
         abort();
     }
 
     closedir(dir);
     free(e);
 
-    fprintf(stderr, "BackFS CACHE: %llu bytes used initially\n",
-            (unsigned long long) total);
+    INFO("%llu bytes used initially\n", (unsigned long long) total);
 
     return total;
 }
@@ -73,7 +72,7 @@ uint64_t get_cache_fs_free_size(const char *root)
 {
     struct statvfs s;
     if (statvfs(root, &s) == -1) {
-        perror("BackFS CACHE ERROR: statfs in get_cache_fs_free_size");
+        PERROR("statfs in get_cache_fs_free_size");
         return 0;
     }
     uint64_t dev_free = (uint64_t) s.f_bfree * s.f_bsize;
@@ -94,11 +93,11 @@ void cache_init(const char *a_cache_dir, uint64_t a_cache_size, uint64_t a_bucke
     char bucket_dir[PATH_MAX];
     snprintf(bucket_dir, PATH_MAX, "%s/buckets", cache_dir);
     cache_used_size = get_cache_used_size(bucket_dir);
-    fprintf(stderr, "BackFS CACHE: %llu bytes used in cache dir\n",
+    INFO("%llu bytes used in cache dir\n",
             (unsigned long long) cache_used_size);
 
     uint64_t cache_free_size = get_cache_fs_free_size(bucket_dir);
-    fprintf(stderr, "BackFS CACHE: %llu bytes free in cache dir\n",
+    INFO("%llu bytes free in cache dir\n",
             (unsigned long long) cache_free_size);
 
     bucket_max_size = a_bucket_max_size;
@@ -111,10 +110,12 @@ const char * bucketname(const char *path)
 
 void dump_queues()
 {
+#ifdef DEBUG
     fprintf(stderr, "BackFS Used Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/head", "buckets/tail");
     fprintf(stderr, "BackFS Free Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/free_head", "buckets/free_tail");
+#endif //DEBUG
 }
 
 /*
@@ -141,8 +142,7 @@ char * next_bucket()
 {
     char *bucket = fsll_getlink(cache_dir, "buckets/free_head");
     if (bucket != NULL) {
-        fprintf(stderr, "BackFS CACHE: re-using free bucket %s\n",
-                bucketname(bucket));
+        INFO("re-using free bucket %s\n", bucketname(bucket));
 
         // disconnect from free queue
         fsll_disconnect(cache_dir, bucket,
@@ -160,13 +160,13 @@ char * next_bucket()
         
         FILE *f = fopen(nbnpath, "r+");
         if (f == NULL && errno != ENOENT) {
-            perror("BackFS CACHE ERROR: open next_bucket");
+            PERROR("open next_bucket");
             return makebucket(0);
         } else {
             if (f != NULL) {
                 // we had a number already there; read it
                 if (fscanf(f, "%llu", (unsigned long long *)&next) != 1) {
-                    fprintf(stderr, "BackFS CACHE: ERROR: unable to read next_bucket\n");
+                    ERROR("unable to read next_bucket\n");
                     fclose(f);
                     return makebucket(0);
                 }
@@ -175,21 +175,20 @@ char * next_bucket()
                 // next_bucket_number doesn't exist; create it and write a 1.
                 f = fopen(nbnpath, "w+");
                 if (f == NULL) {
-                    perror("BackFS CACHE ERROR: open next_bucket again");
+                    PERROR("open next_bucket again");
                     return makebucket(0);
                 }
             }
             // write the next number
             if (f == NULL) {
-                perror("BackFS CACHE ERROR: fdopen for writing in next_bucket");
+                PERROR("fdopen for writing in next_bucket");
                 return makebucket(0);
             }
             fprintf(f, "%llu\n", (unsigned long long) next+1);
             fclose(f);
         }
 
-        fprintf(stderr, "BackFS CACHE: making new bucket %lu\n",
-                (unsigned long) next);
+        INFO("making new bucket %lu\n", (unsigned long) next);
 
         char *new_bucket = makebucket(next);
 
@@ -202,7 +201,7 @@ char * next_bucket()
  */
 void bucket_to_head(const char *bucketpath)
 {
-    fprintf(stderr, "BackFS CACHE: bucket_to_head(%s)\n", bucketpath);
+    INFO("bucket_to_head(%s)\n", bucketpath);
     return fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
 }
 
@@ -240,7 +239,7 @@ uint64_t free_bucket(const char *bucketpath)
 {
     char *n = fsll_getlink(bucketpath, "next");
     if (n != NULL) {
-        fprintf(stderr, "BackFS CACHE ERROR, bucket freed (#%lu) was not the queue tail\n",
+        ERROR("bucket freed (#%lu) was not the queue tail\n",
                 (unsigned long) bucket_path_to_number(bucketpath));
         return 0;
     }
@@ -256,11 +255,11 @@ uint64_t free_bucket(const char *bucketpath)
     
     struct stat s;
     if (stat(data, &s) == -1) {
-        perror("BackFS CACHE ERROR: stat in free_bucket");
+        PERROR("stat in free_bucket");
     }
 
     if (unlink(data) == -1) {
-        perror("BackFS CACHE ERROR: unlink in free_bucket");
+        PERROR("unlink in free_bucket");
         return 0;
     } else {
         cache_used_size -= (uint64_t) s.st_size;
@@ -274,12 +273,12 @@ uint64_t free_bucket(const char *bucketpath)
 void cache_invalidate_bucket(const char *filename, uint32_t block, 
                                 const char *bucket)
 {
-    fprintf(stderr, "BackFS CACHE: invalidating block %lu of file %s\n",
+    INFO("invalidating block %lu of file %s\n",
             (unsigned long) block, filename);
 
     uint64_t freed_size = free_bucket(bucket);
 
-    fprintf(stderr, "BackFS CACHE: freed %llu bytes in bucket %s\n",
+    INFO("freed %llu bytes in bucket %s\n",
             (unsigned long long) freed_size,
             bucketname(bucket));
 }
@@ -292,7 +291,7 @@ void cache_invalidate_file(const char *filename)
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
     DIR *d = opendir(mappath);
     if (d == NULL) {
-        perror("BackFS CACHE ERROR: opendir in cache_invalidate");
+        PERROR("opendir in cache_invalidate");
         pthread_mutex_unlock(&lock);
         return;
     }
@@ -322,7 +321,7 @@ void cache_invalidate_block(const char *filename, uint32_t block)
     
     char *bucket = fsll_getlink(cache_dir, mappath);
     if (bucket == NULL) {
-        fprintf(stderr, "BackFS Warning: Cache invalidation: block %lu of file %s doesn't exist.\n",
+        WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
                 (unsigned long) block, filename);
         pthread_mutex_unlock(&lock);
         return;
@@ -355,8 +354,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         return 0;
     }
 
-    fprintf(stderr, "BackFS CACHE: getting block %lu of file %s\n", 
-            (unsigned long) block, filename);
+    INFO("getting block %lu of file %s\n", (unsigned long) block, filename);
 
     //###
     pthread_mutex_lock(&lock);
@@ -368,12 +366,12 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     ssize_t bplen;
     if ((bplen = readlink(mapfile, bucketpath, PATH_MAX-1)) == -1) {
         if (errno == ENOENT || errno == ENOTDIR) {
-            fprintf(stderr, "BackFS CACHE: block not in cache\n");
+            INFO("block not in cache\n");
             errno = ENOENT;
             pthread_mutex_unlock(&lock);
             return -1;
         } else {
-            perror("BackFS CACHE ERROR: readlink error");
+            PERROR("readlink error");
             errno = EIO;
             pthread_mutex_unlock(&lock);
             return -1;
@@ -390,7 +388,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     uint64_t size = 0;
     struct stat stbuf;
     if (stat(bucketdata, &stbuf) == -1) {
-        perror("BackFS CACHE ERROR: stat on bucket error");
+        PERROR("stat on bucket error");
         errno = EIO;
         pthread_mutex_unlock(&lock);
         return -1;
@@ -398,7 +396,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     size = (uint64_t) stbuf.st_size;
 
     if (size < offset) {
-        fprintf(stderr, "BackFS CACHE: offset for read is past the end\n");
+        WARN("offset for read is past the end\n");
         pthread_mutex_unlock(&lock);
         *bytes_read = 0;
         return 0;
@@ -406,7 +404,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     /*
     if (e->bucket->size - offset < len) {
-        fprintf(stderr, "BackFS CACHE: length + offset for read is past the end\n");
+        WARN("length + offset for read is past the end\n");
         errno = ENXIO;
         free(f);
         pthread_mutex_unlock(&lock);
@@ -416,7 +414,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     int fd = open(bucketdata, O_RDONLY);
     if (fd == -1) {
-        perror("BackFS Cache ERROR: error opening file from cache dir");
+        PERROR("error opening file from cache dir");
         errno = EBADF;
         pthread_mutex_unlock(&lock);
         return -1;
@@ -424,7 +422,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     *bytes_read = pread(fd, buf, len, offset);
     if (*bytes_read == -1) {
-        perror("BackFS Cache ERROR: error reading file from cache dir");
+        PERROR("error reading file from cache dir");
         errno = EIO;
         close(fd);
         pthread_mutex_unlock(&lock);
@@ -432,7 +430,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     }
 
     if (*bytes_read != len) {
-        fprintf(stderr, "BackFS CACHE: read fewer than requested bytes from cache file: %llu instead of %llu\n", 
+        INFO("read fewer than requested bytes from cache file: %llu instead of %llu\n", 
                 (unsigned long long) *bytes_read,
                 (unsigned long long) len
         );
@@ -480,25 +478,25 @@ void make_space_available(uint64_t bytes_needed)
         bytes_needed = bytes_needed - dev_free;
     }
 
-    fprintf(stderr, "BackFS CACHE: need to free %llu bytes\n",
+    INFO("need to free %llu bytes\n",
             (unsigned long long) bytes_needed);
 
     while (bytes_freed < bytes_needed) {
         char *b = fsll_getlink(cache_dir, "buckets/tail");
         
         if (b == NULL) {
-            fprintf(stderr, "BackFS CACHE: ERROR: bucket queue empty in make_space_available!\n");
+            ERROR("bucket queue empty in make_space_available!\n");
             return;
         }
 
         uint64_t f = free_bucket(b);
-        fprintf(stderr, "BackFS CACHE: freed %llu bytes in bucket #%lu\n",
+        INFO("freed %llu bytes in bucket #%lu\n",
                 (unsigned long long) f, (unsigned long) bucket_path_to_number(b));
         free(b);
         bytes_freed += f;
     }
 
-    fprintf(stderr, "BackFS CACHE: freed %llu bytes total\n",
+    INFO("freed %llu bytes total\n",
             (unsigned long long) bytes_freed);
 }
 
@@ -521,8 +519,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     char fileandblock[PATH_MAX];
     snprintf(fileandblock, PATH_MAX, "map%s/%lu", filename, (unsigned long) block);
 
-    fprintf(stderr, "BackFS CACHE: writing %llu bytes to %s\n",
-            (unsigned long long) len, fileandblock);
+    INFO("writing %llu bytes to %s\n", (unsigned long long) len, fileandblock);
 
     //###
     pthread_mutex_lock(&lock);
@@ -531,16 +528,12 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     if (bucketpath != NULL) {
         if (fsll_file_exists(bucketpath, "data")) {
-            fprintf(stderr, "BackFS CACHE: warning: data already exists in cache\n");
+            WARN("data already exists in cache\n");
             free(bucketpath);
             pthread_mutex_unlock(&lock);
             return 0;
         }
     }
-
-    make_space_available(len);
-
-    bucketpath = next_bucket();
 
     /*
     char *head = getlink(cache_dir, "buckets/head");
@@ -561,9 +554,8 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     snprintf(full_filemap_dir, strlen(cache_dir)+5+strlen(filename)+1, "%s/map%s/",
             cache_dir, filename);
 
-    fprintf(stderr, "BackFS CACHE: map file = %s\n", filemap);
-    fprintf(stderr, "BackFS CACHE: full filemap dir = %s\n", full_filemap_dir);
-    fprintf(stderr, "BackFS CACHE: bucket path = %s\n", bucketpath);
+    INFO("map file = %s\n", filemap);
+    INFO("full filemap dir = %s\n", full_filemap_dir);
 
     if (!fsll_file_exists(cache_dir, filemap)) {
         free(filemap);
@@ -574,10 +566,10 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
                 char *component = (char*)malloc(i+1);
                 strncpy(component, full_filemap_dir, i+1);
                 component[i] = '\0';
-                fprintf(stderr, "BackFS CACHE: making %s\n", component);
+                INFO("making %s\n", component);
                 if(mkdir(component, 0700) == -1 && errno != EEXIST) {
-                    perror("BackFS CACHE ERROR: mkdir in cache_add");
-                    fprintf(stderr, "\tcaused by mkdir(%s)\n", component);
+                    PERROR("mkdir in cache_add");
+                    ERROR("\tcaused by mkdir(%s)\n", component);
                     errno = EIO;
                     free(component);
                     pthread_mutex_unlock(&lock);
@@ -590,6 +582,12 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         free(filemap);
     }
     free(full_filemap_dir);
+
+
+    make_space_available(len);
+
+    bucketpath = next_bucket();
+    INFO("bucket path = %s\n", bucketpath);
 
     fsll_makelink(cache_dir, fileandblock, bucketpath);
 
@@ -605,8 +603,8 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     int fd = open(datapath, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
     if (fd == -1) {
-        perror("BackFS CACHE ERROR: open in cache_add");
-        fprintf(stderr, "\tcaused by open(%s, O_WRONLY|O_CREAT)\n", datapath);
+        PERROR("open in cache_add");
+        ERROR("\tcaused by open(%s, O_WRONLY|O_CREAT)\n", datapath);
         errno = EIO;
         pthread_mutex_unlock(&lock);
         return -1;
@@ -614,18 +612,18 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
 
     ssize_t bytes_written = write(fd, buf, len);
     if (bytes_written == -1) {
-        perror("BackFS CACHE ERROR: write in cache_add");
+        PERROR("write in cache_add");
         errno = EIO;
         close(fd);
         pthread_mutex_unlock(&lock);
         return -1;
     }
 
-    fprintf(stderr, "BackFS CACHE: %llu bytes written to cache\n",
+    INFO("%llu bytes written to cache\n",
             (unsigned long long) bytes_written);
 
     if (bytes_written != len) {
-        fprintf(stderr, "BackFS CACHE: not all bytes written to cache!\n");
+        ERROR("not all bytes written to cache!\n");
         errno = EIO;
         close(fd);
         pthread_mutex_unlock(&lock);
@@ -633,7 +631,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     }
 
     cache_used_size += bytes_written;
-    fprintf(stderr, "BackFS CACHE: size now %llu bytes of %llu bytes (%lf%%)\n",
+    INFO("size now %llu bytes of %llu bytes (%lf%%)\n",
             (unsigned long long) cache_used_size,
             (unsigned long long) cache_size,
             (double)100 * cache_used_size / cache_size

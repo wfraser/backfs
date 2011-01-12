@@ -2,6 +2,7 @@
  * Filesystem Linked List
  * Copyright (c) 2010-2011 William R. Fraser
  */
+#include "fsll.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,7 +31,7 @@ char * fsll_getlink(const char *base, const char *file)
             free(result);
             return NULL;
         } else {
-            perror("FSLL ERROR: readlink in fsll_getlink");
+            PERROR("readlink in fsll_getlink");
             free(result);
             return NULL;
         }
@@ -47,16 +48,16 @@ void fsll_makelink(const char *base, const char *file, const char *dest)
 
     if (unlink(source) == -1) {
         if (errno != ENOENT && errno != ENOTDIR) {
-            perror("FSLL ERROR: unlink in fsll_makelink");
-            fprintf(stderr, "\tcaused by unlink(%s)\n", source);
+            PERROR("unlink in fsll_makelink");
+            ERROR("caused by unlink(%s)\n", source);
             return;
         }
     }
 
     if (dest != NULL) {
         if (symlink(dest, source) == -1) {
-            perror("FSLL ERROR: symlink in fsll_makelink");
-            fprintf(stderr, "\tcaused by symlink(%s,%s)\n", dest, source);
+            PERROR("symlink in fsll_makelink");
+            ERROR("caused by symlink(%s,%s)\n", dest, source);
         }
     }
 }
@@ -143,7 +144,7 @@ char * fsll_make_entry(const char *base, const char *dir, uint64_t number)
     }
 
     if (mkdir(path, 0700) == -1) {
-        perror("FSLL ERROR: mkdir in fsll_make_entry");
+        PERROR("mkdir in fsll_make_entry");
         return NULL;
     }
 
@@ -162,9 +163,9 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
 
     if ((p == NULL) ^ (strcmp(h, path) == 0)) {
         if (p)
-            fprintf(stderr, "FSLL ERROR: head entry has a prev: %s\n", path);
+            ERROR("head entry has a prev: %s\n", path);
         else
-            fprintf(stderr, "FSLL ERROR: entry has no prev but is not head: %s\n", path);
+            ERROR("entry has no prev but is not head: %s\n", path);
         fsll_dump(base, head, tail);
         // cowardly refusing to break things farther
         return;
@@ -172,19 +173,19 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
 
     if ((n == NULL) ^ (strcmp(t, path) == 0)) {
         if (n)
-            fprintf(stderr, "FSLL ERROR: tail entry has a next: %s\n", path);
+            ERROR("tail entry has a next: %s\n", path);
         else
-            fprintf(stderr, "FSLL ERROR: entry has no next but is not tail: %s\n", path);
+            ERROR("entry has no next but is not tail: %s\n", path);
         fsll_dump(base, head, tail);
         return;
     }
 
     if ((n != NULL) && strcmp(n, path) == 0) {
-        fprintf(stderr, "FSLL ERROR: entry points to itself as next: %s\n", path);
+        ERROR("entry points to itself as next: %s\n", path);
         return;
     }
     if ((p != NULL) && (strcmp(p, path) == 0)) {
-        fprintf(stderr, "FSLL ERROR: entry points to itself as prev: %s\n", path);
+        ERROR("entry points to itself as prev: %s\n", path);
         return;
     }
 
@@ -192,12 +193,12 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     // tail yet set) because this function is only for promoting an existing
     // element to the head. Use fsll_insert_as_head() for the other case.
     if (h == NULL) {
-        fprintf(stderr, "FSLL ERROR: in fsll_to_head, no head found!\n");
+        ERROR("fsll_to_head, no head found!\n");
         fsll_dump(base, head, tail);
         return;
     }
     if (t == NULL) {
-        fprintf(stderr, "FSLL ERROR: in fsll_to_head, no tail found!\n");
+        ERROR("in fsll_to_head, no tail found!\n");
         fsll_dump(base, head, tail);
         return;
     }
@@ -250,9 +251,9 @@ void fsll_insert_as_head(const char *base, const char *path, const char *head,
         fsll_makelink(base, head, path);
     } else {
         if (h)
-            fprintf(stderr, "FSLL ERROR: list has a head but no tail!\n");
+            ERROR("list has a head but no tail!\n");
         if (t)
-            fprintf(stderr, "FSLL ERROR: list has a tail but no head!\n");
+            ERROR("list has a tail but no head!\n");
     }
 
     if (h) free(h);
@@ -276,9 +277,9 @@ void fsll_insert_as_tail(const char *base, const char *path, const char *head,
         fsll_makelink(base, tail, path);
     } else {
         if (h)
-            fprintf(stderr, "FSLL ERROR: list has a head but no tail!\n");
+            ERROR("list has a head but no tail!\n");
         if (t)
-            fprintf(stderr, "FSLL ERROR: list has a tail but no head!\n");
+            ERROR("list has a tail but no head!\n");
     }
 
     if (h) free(h);
@@ -298,7 +299,7 @@ void fsll_disconnect(const char *base, const char *path, const char *head,
             if (strcmp(t, path) == 0) {
                 fsll_makelink(base, tail, NULL);
             } else {
-                fprintf(stderr, "FSLL ERROR: entry has no next but is not tail: %s\n", path);
+                ERROR("entry has no next but is not tail: %s\n", path);
             }
         } else {
             fsll_makelink(base, head, n);
@@ -311,7 +312,7 @@ void fsll_disconnect(const char *base, const char *path, const char *head,
             if (strcmp(h, path) == 0) {
                 fsll_makelink(base, head, NULL);
             } else {
-                fprintf(stderr, "FSLL ERROR: entry has no prev but is not head: %s\n", path);
+                ERROR("entry has no prev but is not head: %s\n", path);
             }
         } else {
             fsll_makelink(base, tail, p);
