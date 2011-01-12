@@ -65,9 +65,12 @@ void fsll_makelink(const char *base, const char *file, const char *dest)
 bool fsll_file_exists(const char *base, const char *file)
 {
     char path[PATH_MAX];
-    snprintf(path, PATH_MAX, "%s/%s", base, file);
+    if (file != NULL) {
+        snprintf(path, PATH_MAX, "%s/%s", base, file);
+        base = path;
+    }
 
-    if (access(path, F_OK) == -1) {
+    if (access(base, F_OK) == -1) {
         return false;
     } else {
         return true;
