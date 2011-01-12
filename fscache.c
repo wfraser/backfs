@@ -405,9 +405,10 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     size = (uint64_t) stbuf.st_size;
 
     if (size < offset) {
-        WARN("offset for read is past the end: %llu vs %llu\n",
+        WARN("offset for read is past the end: %llu vs %llu, bucket %s\n",
                 (unsigned long long) offset,
-                (unsigned long long) size);
+                (unsigned long long) size,
+                bucketname(bucketpath));
         pthread_mutex_unlock(&lock);
         *bytes_read = 0;
         return 0;
