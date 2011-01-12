@@ -212,7 +212,7 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     if (n) {
         fsll_makelink(n, "prev", p);
     } else {
-        fsll_makelink(base, "tail", p);
+        fsll_makelink(base, tail, p);
         // p->next is already NULL from above
     }
 

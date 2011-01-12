@@ -69,6 +69,18 @@ uint64_t get_cache_used_size(const char *root)
     return total;
 }
 
+uint64_t get_cache_fs_free_size(const char *root)
+{
+    struct statvfs s;
+    if (statvfs(root, &s) == -1) {
+        perror("BackFS CACHE ERROR: statfs in get_cache_fs_free_size");
+        return 0;
+    }
+    uint64_t dev_free = (uint64_t) s.f_bfree * s.f_bsize;
+
+    return dev_free;
+}
+
 /*
  * Initialize the cache.
  */
@@ -82,6 +94,12 @@ void cache_init(const char *a_cache_dir, uint64_t a_cache_size, uint64_t a_bucke
     char bucket_dir[PATH_MAX];
     snprintf(bucket_dir, PATH_MAX, "%s/buckets", cache_dir);
     cache_used_size = get_cache_used_size(bucket_dir);
+    fprintf(stderr, "BackFS CACHE: %llu bytes used in cache dir\n",
+            (unsigned long long) cache_used_size);
+
+    uint64_t cache_free_size = get_cache_fs_free_size(bucket_dir);
+    fprintf(stderr, "BackFS CACHE: %llu bytes free in cache dir\n",
+            (unsigned long long) cache_free_size);
 
     bucket_max_size = a_bucket_max_size;
 }
@@ -240,8 +258,6 @@ uint64_t free_bucket(const char *bucketpath)
     if (stat(data, &s) == -1) {
         perror("BackFS CACHE ERROR: stat in free_bucket");
     }
-
-    cache_used_size -= (uint64_t) s.st_size;
 
     if (unlink(data) == -1) {
         perror("BackFS CACHE ERROR: unlink in free_bucket");
@@ -445,8 +461,24 @@ void make_space_available(uint64_t bytes_needed)
     if (bytes_needed == 0)
         return;
 
-    if (cache_used_size + bytes_needed <= cache_size)
-        return;
+    uint64_t dev_free = get_cache_fs_free_size(cache_dir);
+
+    if (dev_free >= bytes_needed) {
+        // device has plenty
+        if (use_whole_device) {
+            return;
+        } else {
+            // cache_size is limiting factor
+            if (cache_used_size + bytes_needed <= cache_size) {
+                return;
+            } else {
+                bytes_needed = (cache_used_size + bytes_needed) - cache_size;
+            }
+        }
+    } else {
+        // dev_free is limiting factor
+        bytes_needed = bytes_needed - dev_free;
+    }
 
     fprintf(stderr, "BackFS CACHE: need to free %llu bytes\n",
             (unsigned long long) bytes_needed);
