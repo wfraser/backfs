@@ -237,6 +237,15 @@ uint32_t bucket_path_to_number(const char *bucketpath)
  */
 uint64_t free_bucket(const char *bucketpath)
 {
+    char *parent = fsll_getlink(bucketpath, "parent");
+    if (parent && fsll_file_exists(parent, NULL)) {
+        INFO("bucket parent: %s\n", parent);
+        if (unlink(parent) == -1) {
+            PERROR("unlink parent in free_bucket");
+        }
+    }
+    fsll_makelink(bucketpath, "parent", NULL);
+
     char *n = fsll_getlink(bucketpath, "next");
     if (n != NULL) {
         ERROR("bucket freed (#%lu) was not the queue tail\n",
@@ -396,7 +405,9 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     size = (uint64_t) stbuf.st_size;
 
     if (size < offset) {
-        WARN("offset for read is past the end\n");
+        WARN("offset for read is past the end: %llu vs %llu\n",
+                (unsigned long long) offset,
+                (unsigned long long) size);
         pthread_mutex_unlock(&lock);
         *bytes_read = 0;
         return 0;
