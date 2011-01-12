@@ -91,7 +91,6 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
     struct stat stbuf;
     int ret = lstat(real, &stbuf);
     if (ret == -1) {
-        PERROR("lstat returned -1");
         return -errno;
     }
 
