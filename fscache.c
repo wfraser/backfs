@@ -229,6 +229,41 @@ uint32_t bucket_path_to_number(const char *bucketpath)
 }
 
 /*
+ * Starting at the dirname of path, remove empty directories upwards in the
+ * path heirarchy.
+ *
+ * Stops when it gets to <cache_dir>/buckets or <cache_dir>/map
+ */
+void trim_directory(const char *path)
+{
+    size_t len = strlen(path);
+    char *copy = (char*)malloc(len+1);
+    strncpy(copy, path, len+1);
+
+    char map[PATH_MAX];
+    char buckets[PATH_MAX];
+    snprintf(map, PATH_MAX, "%s/map", cache_dir);
+    snprintf(buckets, PATH_MAX, "%s/buckets", cache_dir);
+
+    char *dir = dirname(copy);
+    while ((strcmp(dir, map) != 0) && (strcmp(dir, buckets) != 0)) {
+        // just keep trying rmdir until it fails, then stop.
+        int result = rmdir(dir);
+        if (result == -1) {
+            if (errno != EEXIST && errno != ENOTEMPTY) {
+                PERROR("in trim_directory, rmdir");
+            }
+            free(copy);
+            return;
+        }
+
+        dir = dirname(dir);
+    }
+
+    free(copy);
+}
+
+/*
  * free a bucket
  *
  * moves bucket from the tail of the used queue to the tail of the free queue,
@@ -243,6 +278,9 @@ uint64_t free_bucket(const char *bucketpath)
         if (unlink(parent) == -1) {
             PERROR("unlink parent in free_bucket");
         }
+
+        // if this was the last block, remove the directory
+        trim_directory(parent);
     }
     fsll_makelink(bucketpath, "parent", NULL);
 
@@ -634,15 +672,27 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     INFO("%llu bytes written to cache\n",
             (unsigned long long) bytes_written);
 
+    cache_used_size += bytes_written;
+
     if (bytes_written != len) {
-        ERROR("not all bytes written to cache!\n");
-        errno = EIO;
-        close(fd);
-        pthread_mutex_unlock(&lock);
-        return -1;
+        WARN("not all bytes written to cache!\n");
+
+        // try again?
+        make_space_available(len);
+
+        ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
+
+        cache_used_size += more_bytes_written;
+
+        if (bytes_written + more_bytes_written != len) {
+            ERROR("still not all bytes written to cache!\n");
+            errno = EIO;
+            close(fd);
+            pthread_mutex_unlock(&lock);
+            return -1;
+        }
     }
 
-    cache_used_size += bytes_written;
     INFO("size now %llu bytes of %llu bytes (%lf%%)\n",
             (unsigned long long) cache_used_size,
             (unsigned long long) cache_size,

@@ -245,9 +245,11 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                     BUCKET_MAX_SIZE * block);
             if (nread == -1) {
                 PERROR("read error on real file");
+                close(fd);
                 pthread_mutex_unlock(&backfs.lock);
                 return -EIO;
             } else {
+                close(fd);
                 INFO("got %lu bytes from real file\n", (unsigned long) nread);
                 INFO("adding to cache\n");
                 cache_add(path, block, block_buf, nread);
