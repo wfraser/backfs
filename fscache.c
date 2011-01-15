@@ -678,14 +678,14 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
         WARN("not all bytes written to cache!\n");
 
         // try again?
-        make_space_available(len);
+        make_space_available(len - bytes_written);
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
         cache_used_size += more_bytes_written;
 
         if (bytes_written + more_bytes_written != len) {
-            ERROR("still not all bytes written to cache!\n");
+            PERROR("still not all bytes written to cache!\n");
             errno = EIO;
             close(fd);
             pthread_mutex_unlock(&lock);
