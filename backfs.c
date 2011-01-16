@@ -174,7 +174,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFREG | 0444;
         stbuf->st_nlink = 1;
-        stbuf->st_size = strlen(COMPILEDATE)+1;
+        stbuf->st_size = strlen(BACKFS_VERSION);
         stbuf->st_uid = 0;
         stbuf->st_gid = 0;
         stbuf->st_atime = 0;
@@ -202,8 +202,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
     if (strcmp(path, "/.backfs_version") == 0) {
-        char *date = COMPILEDATE "\n";
-        size_t len = strlen(date);
+        char *ver = BACKFS_VERSION;
+        size_t len = strlen(ver);
 
         if (offset > len) {
             return 0;
@@ -211,7 +211,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         int bytes_out = ((len - offset) > size) ? size : (len - offset);
 
-        memcpy(rbuf, date+offset, bytes_out);
+        memcpy(rbuf, ver+offset, bytes_out);
 
         return bytes_out;
     }
