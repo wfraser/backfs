@@ -63,8 +63,6 @@ uint64_t get_cache_used_size(const char *root)
     closedir(dir);
     free(e);
 
-    INFO("%llu bytes used initially\n", (unsigned long long) total);
-
     return total;
 }
 
