@@ -220,8 +220,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
     bool first = true;
 
     int bytes_read = 0;
-    uint32_t first_block = offset / BUCKET_MAX_SIZE;
-    uint32_t last_block = (offset+size) / BUCKET_MAX_SIZE;
+    uint32_t first_block = offset / backfs.block_size;
+    uint32_t last_block = (offset+size) / backfs.block_size;
     uint32_t block;
     size_t buf_offset = 0;
     for (block = first_block; block <= last_block; block++) {
@@ -229,15 +229,15 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         size_t block_size;
         
         if (block == first_block) {
-            block_offset = offset - block * BUCKET_MAX_SIZE;
+            block_offset = offset - block * backfs.block_size;
         } else {
             block_offset = 0;
         }
 
         if (block == last_block) {
-            block_size = (offset+size) - (block*BUCKET_MAX_SIZE) - block_offset;
+            block_size = (offset+size) - (block * backfs.block_size) - block_offset;
         } else {
-            block_size = BUCKET_MAX_SIZE - block_offset;
+            block_size = backfs.block_size - block_offset;
         }
 
         // in case another thread is reading a full block as a result of a 
@@ -246,7 +246,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         if (first) {
             INFO("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
-                    offset, offset+size, (unsigned long)BUCKET_MAX_SIZE);
+                    offset, offset+size, (unsigned long) backfs.block_size);
             first = false;
         }
 
@@ -281,9 +281,9 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             }
             
             // read the entire block
-            char *block_buf = (char*)malloc(BUCKET_MAX_SIZE);
-            int nread = pread(fd, block_buf, BUCKET_MAX_SIZE,
-                    BUCKET_MAX_SIZE * block);
+            char *block_buf = (char*)malloc(backfs.block_size);
+            int nread = pread(fd, block_buf, backfs.block_size,
+                    backfs.block_size * block);
             if (nread == -1) {
                 PERROR("read error on real file");
                 close(fd);
@@ -526,6 +526,8 @@ int main(int argc, char **argv)
         , cache_human
         , cache_units
     );
+
+    printf("block size %llu bytes\n", backfs.block_size);
 
     cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 

@@ -10,8 +10,6 @@
 #include <stdbool.h>
 #include <limits.h>
 
-#define BUCKET_MAX_SIZE 1048576
-
 void cache_init(const char *cache_dir, uint64_t cache_size, uint64_t bucket_max_size);
 int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         char *buf, uint64_t len, uint64_t *bytes_read);

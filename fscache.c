@@ -448,7 +448,7 @@ int cache_free_orphan_buckets()
 int cache_fetch(const char *filename, uint32_t block, uint64_t offset, 
         char *buf, uint64_t len, uint64_t *bytes_read)
 {
-    if (offset + len > BUCKET_MAX_SIZE || filename == NULL) {
+    if (offset + len > bucket_max_size || filename == NULL) {
         errno = EINVAL;
         return -1;
     }
