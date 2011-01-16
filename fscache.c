@@ -337,6 +337,12 @@ int cache_invalidate_bucket(const char *filename, uint32_t block,
 
     uint64_t freed_size = free_bucket_mid_queue(bucket);
 
+    char mapfile[PATH_MAX];
+    snprintf(mapfile, PATH_MAX, "%s/map%s/%lu", cache_dir, filename, (unsigned long) block);
+    if (unlink(mapfile) == -1) {
+        PERROR("unlink map file in cache_invalidate_bucket");
+    }
+
     INFO("freed %llu bytes in bucket %s\n",
             (unsigned long long) freed_size,
             bucketname(bucket));
