@@ -17,8 +17,9 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         char *buf, uint64_t len, uint64_t *bytes_read);
 int cache_add(const char *filename, uint32_t block, char *buf, 
         uint64_t len);
-void cache_invalidate_block(const char *filename, uint32_t block);
-void cache_invalidate_file(const char *filename);
+int cache_invalidate_block(const char *filename, uint32_t block);
+int cache_invalidate_file(const char *filename);
+int cache_free_orphan_buckets();
 
 #ifndef ERROR
 #ifdef SYSLOG

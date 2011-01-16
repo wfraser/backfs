@@ -253,6 +253,8 @@ void trim_directory(const char *path)
             }
             free(copy);
             return;
+        } else {
+            INFO("removed empty map directory %s\n", dir);
         }
 
         dir = dirname(dir);
@@ -268,7 +270,7 @@ void trim_directory(const char *path)
  * deletes the data in the bucket
  * returns the size of the data deleted
  */
-uint64_t free_bucket(const char *bucketpath)
+uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad)
 {
     char *parent = fsll_getlink(bucketpath, "parent");
     if (parent && fsll_file_exists(parent, NULL)) {
@@ -282,11 +284,13 @@ uint64_t free_bucket(const char *bucketpath)
     }
     fsll_makelink(bucketpath, "parent", NULL);
 
-    char *n = fsll_getlink(bucketpath, "next");
-    if (n != NULL) {
-        ERROR("bucket freed (#%lu) was not the queue tail\n",
-                (unsigned long) bucket_path_to_number(bucketpath));
-        return 0;
+    if (free_in_the_middle_is_bad) {
+        char *n = fsll_getlink(bucketpath, "next");
+        if (n != NULL) {
+            ERROR("bucket freed (#%lu) was not the queue tail\n",
+                    (unsigned long) bucket_path_to_number(bucketpath));
+            return 0;
+        }
     }
 
     fsll_disconnect(cache_dir, bucketpath, 
@@ -312,23 +316,35 @@ uint64_t free_bucket(const char *bucketpath)
     }
 }
 
+inline uint64_t free_bucket_mid_queue(const char *bucketpath)
+{
+    return free_bucket_real(bucketpath, false);
+}
+
+inline uint64_t free_bucket(const char *bucketpath)
+{
+    return free_bucket_real(bucketpath, true);
+}
+
 /*
  * do not use this function directly
  */
-void cache_invalidate_bucket(const char *filename, uint32_t block, 
+int cache_invalidate_bucket(const char *filename, uint32_t block, 
                                 const char *bucket)
 {
     INFO("invalidating block %lu of file %s\n",
             (unsigned long) block, filename);
 
-    uint64_t freed_size = free_bucket(bucket);
+    uint64_t freed_size = free_bucket_mid_queue(bucket);
 
     INFO("freed %llu bytes in bucket %s\n",
             (unsigned long long) freed_size,
             bucketname(bucket));
+
+    return 0;
 }
 
-void cache_invalidate_file(const char *filename)
+int cache_invalidate_file(const char *filename)
 {
     pthread_mutex_lock(&lock);
 
@@ -338,7 +354,7 @@ void cache_invalidate_file(const char *filename)
     if (d == NULL) {
         PERROR("opendir in cache_invalidate");
         pthread_mutex_unlock(&lock);
-        return;
+        return -1*errno;
     }
 
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
@@ -354,9 +370,11 @@ void cache_invalidate_file(const char *filename)
     }
 
     pthread_mutex_unlock(&lock);
+
+    return 0;
 }
 
-void cache_invalidate_block(const char *filename, uint32_t block)
+int cache_invalidate_block(const char *filename, uint32_t block)
 {
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "map%s/%lu",
@@ -369,12 +387,53 @@ void cache_invalidate_block(const char *filename, uint32_t block)
         WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
                 (unsigned long) block, filename);
         pthread_mutex_unlock(&lock);
-        return;
+        return -ENOENT;
     }
 
     cache_invalidate_bucket(filename, block, bucket);
 
     pthread_mutex_unlock(&lock);
+
+    return 0;
+}
+
+int cache_free_orphan_buckets()
+{
+    char bucketdir[PATH_MAX];
+    snprintf(bucketdir, PATH_MAX, "%s/buckets", cache_dir);
+
+    pthread_mutex_lock(&lock);
+
+    DIR *d = opendir(bucketdir);
+    if (d == NULL) {
+        PERROR("opendir in cache_free_orphan_buckets");
+        pthread_mutex_unlock(&lock);
+        return -1*errno;
+    }
+
+    struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
+    struct dirent *result = e;
+    while (readdir_r(d, e, &result) == 0 && result != NULL) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+
+        char bucketpath[PATH_MAX];
+        snprintf(bucketpath, PATH_MAX, "%s/buckets/%s", cache_dir, e->d_name);
+
+        char *parent = fsll_getlink(bucketpath, "parent");
+
+        if (fsll_file_exists(bucketpath, "data") &&
+                (parent == NULL || !fsll_file_exists(parent, NULL))) {
+            INFO("bucket %s is an orphan", e->d_name);
+            if (parent) {
+                INFO("\tparent was %s\n", parent);
+            }
+            free_bucket_mid_queue(bucketpath);
+        }
+    }
+
+    pthread_mutex_unlock(&lock);
+
+    return 0;
 }
 
 /*

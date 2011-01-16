@@ -1,4 +1,4 @@
-CFLAGS=-Wall -g3 -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -I/usr/include/fuse -DSYSLOG
+CFLAGS=-Wall -g3 -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -I/usr/include/fuse -DSYSLOG -DCOMPILEDATE="\"$(shell date --rfc-3339=seconds)\""
 
 LDFLAGS=-lfuse
 
