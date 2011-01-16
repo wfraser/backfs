@@ -86,6 +86,13 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
             return 0;
     }
 
+    if (strcmp("/.backfs_version", path) == 0) {
+        if ((fi->flags & 3) != O_RDONLY)
+            return -EACCES;
+        else
+            return 0;
+    }
+
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
     struct stat stbuf;
@@ -130,7 +137,13 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
         // nonsensical error "Cross-device link"
         return -EXDEV;
     } else if (strcmp(command, "invalidate") == 0) {
-        cache_invalidate_file(data);
+        int err = cache_invalidate_file(data);
+        if (err != 0)
+            return err;
+    } else if (strcmp(command, "free_orphans") == 0) {
+        int err = cache_free_orphan_buckets();
+        if (err != 0)
+            return err;
     } else if (strcmp(command, "noop") == 0) {
         // test command; do nothing
     } else {
@@ -157,6 +170,19 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         return 0;
     }
 
+    if (strcmp(path, "/.backfs_version") == 0) {
+        memset(stbuf, 0, sizeof(struct stat));
+        stbuf->st_mode = S_IFREG | 0444;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = strlen(COMPILEDATE)+1;
+        stbuf->st_uid = 0;
+        stbuf->st_gid = 0;
+        stbuf->st_atime = 0;
+        stbuf->st_mtime = 0;
+        stbuf->st_ctime = 0;
+        return 0;
+    }
+
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
     int ret = lstat(real, stbuf);
@@ -175,6 +201,21 @@ int backfs_getattr(const char *path, struct stat *stbuf)
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
+    if (strcmp(path, "/.backfs_version") == 0) {
+        char *date = COMPILEDATE "\n";
+        size_t len = strlen(date);
+
+        if (offset > len) {
+            return 0;
+        }
+
+        int bytes_out = ((len - offset) > size) ? size : (len - offset);
+
+        memcpy(rbuf, date+offset, bytes_out);
+
+        return bytes_out;
+    }
+
     // for debug output
     bool first = true;
 
@@ -329,6 +370,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     // fs control handle
     if (strcmp("/", path) == 0) {
         filler(buf, ".backfs_control", NULL, 0);
+        filler(buf, ".backfs_version", NULL, 0);
     }
 
     int res;
@@ -338,6 +380,8 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         filler(buf, rp->d_name, NULL, 0);
     }
     free(entry);
+
+    closedir(dir);
 
     return 0;
 }
