@@ -139,10 +139,10 @@ char * fsll_make_entry(const char *base, const char *dir, uint64_t number)
 {
     char *path = (char*)malloc(PATH_MAX);
     if (dir != NULL) {
-        snprintf(path, PATH_MAX, "%s/%s/%010llu",
+        snprintf(path, PATH_MAX, "%s/%s/%llu",
                 base, dir, (unsigned long long) number);
     } else {
-        snprintf(path, PATH_MAX, "%s/%010llu", 
+        snprintf(path, PATH_MAX, "%s/%llu", 
                 base, (unsigned long long) number);
     }
 

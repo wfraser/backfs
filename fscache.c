@@ -485,7 +485,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     bucket_to_head(bucketpath);
 
-    // [cache_dir]/buckets/%010lu/data
+    // [cache_dir]/buckets/%lu/data
     char bucketdata[PATH_MAX];
     snprintf(bucketdata, PATH_MAX, "%s/data", bucketpath);
 
