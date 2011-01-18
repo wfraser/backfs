@@ -63,7 +63,7 @@ static struct fuse_opt backfs_opts[] = {
 void usage()
 {
     fprintf(stderr, 
-        "usage: backfs [-o <options>] <mount point>\n"
+        "usage: backfs [-o <options>] <backing> <mount point>\n"
         "\n"
         "BackFS options:\n"
         "    -o cache               cache location (REQUIRED)\n"
@@ -438,14 +438,34 @@ int main(int argc, char **argv)
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct statvfs cachedir_statvfs;
 
+    char cwd[PATH_MAX];
+    getcwd(cwd, PATH_MAX);
+    fprintf(stderr, "cwd: %s\n", cwd);
+
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: fuse_opt_parse failed\n");
         return 1;
     }
 
     if (backfs.real_root == NULL) {
-        fprintf(stderr, "BackFS: error: you need to specify a backing filesystem with \"-o backing_fs\"\n");
-        return -1;
+        if (args.argc != 3) {
+            fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
+            usage();
+            fuse_opt_add_arg(&args, "-ho");
+            backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+            return -1;
+        } else {
+            backfs.real_root = args.argv[1];
+            args.argv[1] = args.argv[2];
+            args.argc = 2;
+        }
+    }
+
+    if (backfs.real_root[0] != '/') {
+        char *rel = backfs.real_root;
+
+        backfs.real_root = (char*)malloc(strlen(cwd)+strlen(rel)+2);
+        sprintf(backfs.real_root, "%s/%s", cwd, rel);
     }
 
     DIR *d;
@@ -458,6 +478,13 @@ int main(int argc, char **argv)
     if (backfs.cache_dir == NULL) {
         fprintf(stderr, "BackFS: error: you need to specify a cache location with \"-o cache\"\n");
         return -1;
+    }
+
+    if (backfs.cache_dir[0] != '/') {
+        char *rel = backfs.cache_dir;
+
+        backfs.cache_dir = (char*)malloc(strlen(cwd)+strlen(rel)+2);
+        sprintf(backfs.cache_dir, "%s/%s", cwd, rel);
     }
 
 #ifdef SYSLOG
