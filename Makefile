@@ -13,7 +13,7 @@ all: backfs
 backfs: backfs.o fscache.o fsll.o
 
 clean:
-	rm -f *.o backfs
+	rm -f *.o *~ backfs
 
 install: backfs
 	echo cp backfs $(PREFIX)/bin
