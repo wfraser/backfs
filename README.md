@@ -11,6 +11,8 @@ When data is requested, BackFS checks its cache, and if the requested data's not
 This continues until the cache is full, and then new additions to the cache will be made by pushing out the least recently accessed data to make room.
 The result is that the most frequently used data will be in the local cache and won't need to be fetched from the network, but the whole share is still available.
 
+If the data in the backing store is updated, when someone requests that data BackFS will notice the change and invalidate its cached data automatically.
+
 #### !! EXPERIMENTAL WARNING !! ####
 
 #### !! BackFS is experimental code and should not be used on production systems !! ####
@@ -174,10 +176,10 @@ A quick and dirty way to invalidate a whole directory (*be careful, no guarantee
 
 Strictly speaking, the last step isn't needed, because once buckets aren't linked in the map, they'll fall off the cache as it continues to be filled.
 
+*Of course, you can also invalidate cache data by changing the file modification time, using a command like `touch`.*
+
 Todo List
 ---------
-
-* Automatic cache invalidation using file modification times. Currently the cache will get stale if the backing store is modified and you don't manually invalidate. :(
 
 * Make BackFS a write-through cache.
 
