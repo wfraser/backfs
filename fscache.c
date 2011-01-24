@@ -298,17 +298,23 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
 
     fsll_insert_as_tail(cache_dir, bucketpath,
             "buckets/free_head", "buckets/free_tail");
+            
+    char mtime[PATH_MAX];
+    snprintf(mtime, PATH_MAX, "%s/mtime", bucketpath);
+    if (unlink(mtime) == -1) {
+        PERROR("unlink mtime in free_bucket");
+    }
 
     char data[PATH_MAX];
     snprintf(data, PATH_MAX, "%s/data", bucketpath);
     
     struct stat s;
     if (stat(data, &s) == -1) {
-        PERROR("stat in free_bucket");
+        PERROR("stat data in free_bucket");
     }
 
     if (unlink(data) == -1) {
-        PERROR("unlink in free_bucket");
+        PERROR("unlink data in free_bucket");
         return 0;
     } else {
         cache_used_size -= (uint64_t) s.st_size;
@@ -441,12 +447,16 @@ int cache_free_orphan_buckets()
  * Important: you can specify less than one block, but not more.
  * Nor can a read be across block boundaries.
  *
+ * mtime is the file modification time. If what's in the cache doesn't match
+ * this, the cache data is invalidated and this function returns -1 and sets
+ * ENOENT.
+ *
  * Returns 0 on success.
  * On error returns -1 and sets errno.
  * In particular, if the block is not in the cache, sets ENOENT
  */
 int cache_fetch(const char *filename, uint32_t block, uint64_t offset, 
-        char *buf, uint64_t len, uint64_t *bytes_read)
+        char *buf, uint64_t len, uint64_t *bytes_read, time_t mtime)
 {
     if (offset + len > bucket_max_size || filename == NULL) {
         errno = EINVAL;
@@ -484,6 +494,32 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     bucketpath[bplen] = '\0';
 
     bucket_to_head(bucketpath);
+    
+    char mtimepath[PATH_MAX];
+    snprintf(mtimepath, PATH_MAX, "%s/mtime", bucketpath);
+    FILE *f = fopen(mtimepath, "r");
+    if (f == NULL) {
+        PERROR("open mtime file failed");
+        errno = EIO;
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
+    uint64_t bucket_mtime;
+    if (fscanf(f, "%llu", (unsigned long long *) &bucket_mtime) != 1) {
+        ERROR("error reading mtime file");
+        errno = EIO;
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
+    fclose(f);
+    
+    if (bucket_mtime != (uint64_t)mtime) {
+        // mtime mismatch; invalidate and return
+        cache_invalidate_file(filename);
+        errno = ENOENT;
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
 
     // [cache_dir]/buckets/%lu/data
     char bucketdata[PATH_MAX];
@@ -612,7 +648,8 @@ void make_space_available(uint64_t bytes_needed)
  * Important: this must be the FULL block. All subsequent reads will
  * assume that the full block is here.
  */
-int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
+int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
+              time_t mtime)
 {
     if (len > bucket_max_size) {
         errno = EOVERFLOW;
@@ -641,18 +678,6 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
             return 0;
         }
     }
-
-    /*
-    char *head = getlink(cache_dir, "buckets/head");
-    if (head == NULL) {
-        makelink(cache_dir, "buckets/head", bucketpath);
-        makelink(cache_dir, "buckets/tail", bucketpath);
-    } else {
-        makelink(head, "prev", bucketpath);
-        makelink(bucketpath, "next", head);
-        makelink(cache_dir, "buckets/head", bucketpath);
-    }
-    */
 
     char *filemap = (char*)malloc(strlen(filename) + 4);
     snprintf(filemap, strlen(filename)+4, "map%s", filename);
@@ -702,8 +727,19 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len)
     snprintf(fullfilemap, PATH_MAX, "%s/%s", cache_dir, fileandblock);
     fsll_makelink(bucketpath, "parent", fullfilemap);
     free(fullfilemap);
+    
+    // write mtime
+    
+    char mtimepath[PATH_MAX];
+    snprintf(mtimepath, PATH_MAX, "%s/mtime", bucketpath);
+    FILE *f = fopen(mtimepath, "r");
+    if (f == NULL) {
+        PERROR("opening mtime file in cache_add failed");
+    }
+    fprintf(f, "%llu\n", (unsigned long long) mtime);
+    fclose(f);
 
-    // finally, write
+    // finally, write data
 
     char datapath[PATH_MAX];
     snprintf(datapath, PATH_MAX, "%s/data", bucketpath);

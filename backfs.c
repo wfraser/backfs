@@ -252,10 +252,20 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         INFO("reading block %lu, 0x%lx to 0x%lx\n",
                 (unsigned long) block, block_offset, block_offset + block_size);
+                
+        char real[PATH_MAX];
+        snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+        
+        struct stat real_stat;
+        real_stat.st_mtime = 0;
+        if (stat(real, &real_stat) == -1) {
+            PERROR("stat on real file failed");
+            return -1 * errno;
+        }
 
         uint64_t bread = 0;
         int result = cache_fetch(path, block, block_offset, 
-                rbuf + buf_offset, block_size, &bread);
+                rbuf + buf_offset, block_size, &bread, real_stat.st_mtime);
         if (result == -1) {
             if (errno == ENOENT) {
                 // not an error
@@ -269,8 +279,6 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             // need to do a real read
             //
 
-            char real[PATH_MAX];
-            snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
             INFO("reading block %lu from real file: %s\n",
                     (unsigned long) block, real);
             int fd = open(real, O_RDONLY);
@@ -293,7 +301,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 close(fd);
                 INFO("got %lu bytes from real file\n", (unsigned long) nread);
                 INFO("adding to cache\n");
-                cache_add(path, block, block_buf, nread);
+                cache_add(path, block, block_buf, nread, real_stat.st_mtime);
 
                 pthread_mutex_unlock(&backfs.lock);
 
