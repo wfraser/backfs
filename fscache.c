@@ -350,10 +350,8 @@ int cache_invalidate_bucket(const char *filename, uint32_t block,
     return 0;
 }
 
-int cache_invalidate_file(const char *filename)
+int cache_invalidate_file_real(const char *filename)
 {
-    pthread_mutex_lock(&lock);
-
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
     DIR *d = opendir(mappath);
@@ -375,9 +373,15 @@ int cache_invalidate_file(const char *filename)
         cache_invalidate_bucket(filename, block, bucket);
     }
 
-    pthread_mutex_unlock(&lock);
-
     return 0;
+}
+
+int cache_invalidate_file(const char *filename)
+{
+    pthread_mutex_lock(&lock);
+    int retval = cache_invalidate_file_real(filename);
+    pthread_mutex_unlock(&lock);   
+    return retval;
 }
 
 int cache_invalidate_block(const char *filename, uint32_t block)
@@ -515,12 +519,19 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
-        cache_invalidate_file(filename);
+        if (bucket_mtime < (uint64_t)mtime) {
+            INFO("cache data is %llu seconds older than the data caller wants\n",
+                 (unsigned long long) mtime - bucket_mtime);
+        } else {
+            INFO("cache data is %llu seconds newer than the data caller wants\n",
+                 (unsigned long long) bucket_mtime - mtime);
+        }
+        cache_invalidate_file_real(filename);
         errno = ENOENT;
         pthread_mutex_unlock(&lock);
         return -1;
     }
-
+    
     // [cache_dir]/buckets/%lu/data
     char bucketdata[PATH_MAX];
     snprintf(bucketdata, PATH_MAX, "%s/data", bucketpath);
@@ -732,12 +743,13 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     
     char mtimepath[PATH_MAX];
     snprintf(mtimepath, PATH_MAX, "%s/mtime", bucketpath);
-    FILE *f = fopen(mtimepath, "r");
+    FILE *f = fopen(mtimepath, "w");
     if (f == NULL) {
         PERROR("opening mtime file in cache_add failed");
+    } else {
+        fprintf(f, "%llu\n", (unsigned long long) mtime);
+        fclose(f);
     }
-    fprintf(f, "%llu\n", (unsigned long long) mtime);
-    fclose(f);
 
     // finally, write data
 
