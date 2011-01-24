@@ -109,6 +109,8 @@ Each bucket is a directory with a couple files in it:
 
 - `data`
     - The cache data. Only present for used buckets.
+- `mtime`
+    - The UNIX timestamp of the data's modification time. Only present for used buckets.
 - `parent`
     - Symlink to the parent in the map directory. Only present for used buckets.
 - `next`
@@ -126,6 +128,7 @@ When a bucket is accessed, it is promoted to the head of the used queue by snipp
 When buckets are freed, to make room for more data in the cache, several things happen in sequence:
 
 - their `data` file is deleted
+- their `mtime` file is deleted
 - the `parent` symlink is followed, the map file it pointed to is deleted
 - the `parent` symlink itself is deleted
 - the bucket is removed from the tail used queue
