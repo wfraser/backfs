@@ -31,6 +31,9 @@
 #define backfs_fuse_main fuse_main
 #endif
 
+// default cache block size: 128 KiB
+#define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
+
 #include "fscache.h"
 
 struct backfs { 
@@ -239,6 +242,9 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         } else {
             block_size = backfs.block_size - block_offset;
         }
+		
+        if (block_size == 0)
+            continue;
 
         // in case another thread is reading a full block as a result of a 
         // cache miss
@@ -512,20 +518,59 @@ int main(int argc, char **argv)
     }
 
     char buf[PATH_MAX];
-    snprintf(buf, PATH_MAX, "%s%s", backfs.cache_dir, "/buckets");
+    snprintf(buf, PATH_MAX, "%s/buckets", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache bucket directory");
         return 5;
     }
 
-    snprintf(buf, PATH_MAX, "%s%s", backfs.cache_dir, "/map");
+    snprintf(buf, PATH_MAX, "%s/map", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache map directory");
         return 6;
     }
+	
+    unsigned long long cache_block_size = 0;
+    snprintf(buf, PATH_MAX, "%s/buckets/bucket_size", backfs.cache_dir);
+    bool has_block_size_marker = false;
+    FILE *f = fopen(buf, "r");
+    if (f == NULL) {
+    if (errno != ENOENT) {
+            perror("BackFS ERROR: unable to open cache block size marker");
+            return 7;
+        }
+    } else {
+        if (fscanf(f, "%llu", &cache_block_size) != 1) {
+            perror("BackFS ERROR: unable to read cache block size marker");
+            return 8;
+        }
+        has_block_size_marker = true;
+		
+        if (backfs.block_size == 0) {
+            backfs.block_size = cache_block_size;
+            fprintf(stderr, "BackFS: using previous cache block size of %llu\n", cache_block_size);
+        } else if (backfs.block_size != cache_block_size) {
+            fprintf(stderr, "BackFS ERROR: cache was made using different block size of %llu. Unable to use specified size of %llu\n",
+                    cache_block_size, backfs.block_size);
+            return 9;
+        }
+        fclose(f);
+        f = NULL;
+    }
 
     if (backfs.block_size == 0) {
-        backfs.block_size = 0x100000;    // 1 MiB
+        backfs.block_size = BACKFS_DEFAULT_BLOCK_SIZE;
+    }
+	
+    if (!has_block_size_marker) {
+        f = fopen(buf, "w");
+        if (f == NULL) {
+            perror("BackFS ERROR: unable to open cache block size marker");
+            return 10;
+        }
+        fprintf(f, "%llu\n", backfs.block_size);
+        fclose(f);
+        f = NULL;
     }
 
     uint64_t device_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
