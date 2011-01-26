@@ -245,12 +245,50 @@ void trim_directory(const char *path)
 
     char *dir = dirname(copy);
     while ((strcmp(dir, map) != 0) && (strcmp(dir, buckets) != 0)) {
-        // just keep trying rmdir until it fails, then stop.
+    
+        DIR *d = opendir(dir);
+        struct dirent *e;
+        bool found_mtime = false;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_name[0] == '.')
+                continue;
+            
+            // remove mtime files, if found
+            if (strcmp(e->d_name, "mtime") == 0) {
+                struct stat s;
+                char mtime[PATH_MAX];
+                snprintf(mtime, PATH_MAX, "%s/mtime", dir);
+                stat(mtime, &s);
+                if (S_IFREG & s.st_mode) {
+                    found_mtime = true;
+                    continue;
+                }
+            }
+            
+            // if we got here, the directory has entries
+            INFO("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            free(copy);
+            return;
+        }
+        
+        if (found_mtime) {
+            char mtime[PATH_MAX];
+            snprintf(mtime, PATH_MAX, "%s/mtime", dir);
+            if (unlink(mtime) == -1) {
+                PERROR("in trim_directory, unable to unlink mtime file");
+                ERROR("\tpath was %s\n", mtime);
+            } else {
+                INFO("removed mtime file %s/mtime\n", dir);
+            }
+        }
+
         int result = rmdir(dir);
         if (result == -1) {
             if (errno != EEXIST && errno != ENOTEMPTY) {
                 PERROR("in trim_directory, rmdir");
             }
+            
+            WARN("in trim_directory, directory still not empty, but how? path was %s\n", dir);
             free(copy);
             return;
         } else {
@@ -298,12 +336,6 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
 
     fsll_insert_as_tail(cache_dir, bucketpath,
             "buckets/free_head", "buckets/free_tail");
-            
-    char mtime[PATH_MAX];
-    snprintf(mtime, PATH_MAX, "%s/mtime", bucketpath);
-    if (unlink(mtime) == -1) {
-        PERROR("unlink mtime in free_bucket");
-    }
 
     char data[PATH_MAX];
     snprintf(data, PATH_MAX, "%s/data", bucketpath);
@@ -364,6 +396,16 @@ int cache_invalidate_file_real(const char *filename)
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
     struct dirent *result = e;
     while (readdir_r(d, e, &result) == 0 && result != NULL) {
+        // probably not needed, because trim_directory would take care of the
+        // mtime file, but might as well do it now to save time.
+        if (strcmp(e->d_name, "mtime") == 0) {
+            char mtime[PATH_MAX];
+            snprintf(mtime, PATH_MAX, "%s/mtime", mappath);
+            INFO("removed mtime file %s\n", mtime);
+            unlink(mtime);
+            continue;
+        }
+    
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
 
         char *bucket = fsll_getlink(mappath, e->d_name);
@@ -478,7 +520,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     pthread_mutex_lock(&lock);
 
     char mapfile[PATH_MAX];
-    snprintf(mapfile, PATH_MAX, "%s/map/%s/%lu",
+    snprintf(mapfile, PATH_MAX, "%s/map%s/%lu",
             cache_dir, filename, (unsigned long) block);
     char bucketpath[PATH_MAX];
     ssize_t bplen;
@@ -500,7 +542,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     bucket_to_head(bucketpath);
     
     char mtimepath[PATH_MAX];
-    snprintf(mtimepath, PATH_MAX, "%s/mtime", bucketpath);
+    snprintf(mtimepath, PATH_MAX, "%s/map%s/mtime", cache_dir, filename);
     FILE *f = fopen(mtimepath, "r");
     if (f == NULL) {
         PERROR("open mtime file failed");
@@ -742,7 +784,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     // write mtime
     
     char mtimepath[PATH_MAX];
-    snprintf(mtimepath, PATH_MAX, "%s/mtime", bucketpath);
+    snprintf(mtimepath, PATH_MAX, "%s/map%s/mtime", cache_dir, filename);
     FILE *f = fopen(mtimepath, "w");
     if (f == NULL) {
         PERROR("opening mtime file in cache_add failed");
