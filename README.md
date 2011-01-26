@@ -109,8 +109,6 @@ Each bucket is a directory with a couple files in it:
 
 - `data`
     - The cache data. Only present for used buckets.
-- `mtime`
-    - The UNIX timestamp of the data's modification time. Only present for used buckets.
 - `parent`
     - Symlink to the parent in the map directory. Only present for used buckets.
 - `next`
@@ -128,7 +126,6 @@ When a bucket is accessed, it is promoted to the head of the used queue by snipp
 When buckets are freed, to make room for more data in the cache, several things happen in sequence:
 
 - their `data` file is deleted
-- their `mtime` file is deleted
 - the `parent` symlink is followed, the map file it pointed to is deleted
 - the `parent` symlink itself is deleted
 - the bucket is removed from the tail used queue
@@ -150,6 +147,8 @@ E.g. if `/mnt/backing_store/foo/bar` is accessed, the map directory will be `/va
 Inside each map directory are symlinks to buckets of the file's cached data.
 For example, with the default block size of 1 MiB, the first megabyte of `/foo/bar` would be pointed to by a symlink named `/map/foo/bar/0`.
 That might point to `/buckets/4227` or something.
+
+Also inside the map directory is a file `mtime` which contains the Unix timestamp of the file's modification time. This is checked against the backing store on each read, and if there is a mismatch, the cache data is deleted and refreshed.
 
 When buckets are freed to make room in the cache, the corresponding map symlinks are removed.
 BackFS also checks if the last block of a file was removed, and then removes that file's map directory as well, and if possible, its parent's, and its parent's parent's, etc., keeping the map tree minimal.
