@@ -462,7 +462,7 @@ int main(int argc, char **argv)
     }
 
     if (backfs.real_root == NULL) {
-        if ((strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
+        if (args.argv[1] && (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
             fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
             usage();
             fuse_opt_add_arg(&args, "-ho");
