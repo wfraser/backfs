@@ -609,8 +609,10 @@ int main(int argc, char **argv)
 
     printf("block size %llu bytes\n", backfs.block_size);
 
+    printf("initializing cache and scanning existing cache dir...\n");
     cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 
+    printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 
     return 0;
