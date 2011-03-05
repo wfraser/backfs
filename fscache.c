@@ -267,6 +267,7 @@ void trim_directory(const char *path)
             
             // if we got here, the directory has entries
             INFO("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            closedir(d);
             free(copy);
             return;
         }
@@ -281,6 +282,9 @@ void trim_directory(const char *path)
                 INFO("removed mtime file %s/mtime\n", dir);
             }
         }
+
+        closedir(d);
+        d = NULL;
 
         int result = rmdir(dir);
         if (result == -1) {
