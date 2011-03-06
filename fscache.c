@@ -812,11 +812,16 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
 
     ssize_t bytes_written = write(fd, buf, len);
     if (bytes_written == -1) {
-        PERROR("write in cache_add");
-        errno = EIO;
-        close(fd);
-        pthread_mutex_unlock(&lock);
-        return -1;
+        if (errno == ENOSPC) {
+            INFO("nothing written (no space on device)\n");
+            bytes_written = 0;
+        } else {
+            PERROR("write in cache_add");
+            errno = EIO;
+            close(fd);
+            pthread_mutex_unlock(&lock);
+            return -1;
+        }
     }
 
     INFO("%llu bytes written to cache\n",
