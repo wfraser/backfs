@@ -23,8 +23,6 @@
 
 #include <pthread.h>
 
-#include "backfs.h"
-
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
 #else
@@ -33,6 +31,26 @@
 
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
+
+#ifdef DEBUG
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "BackFS ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "BackFS WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "BackFS: " __VA_ARGS__)
+#define PERROR(msg) perror("BackFS ERROR: " msg)
+#endif //SYSLOG
+#else
+#define ERROR(...) /* __VA_ARGS__ */
+#define WARN(...) /* __VA_ARGS__ */
+#define INFO(...) /* __VA_ARGS__ */
+#define PERROR(msg) /* msg */
+#endif //DEBUG
 
 #include "fscache.h"
 

@@ -27,6 +27,26 @@ static pthread_mutex_t lock;
 
 #include "fsll.h"
 
+#ifdef DEBUG
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, "CACHE: " __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "CACHE ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "BackFS CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "BackFS CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "BackFS CACHE: " __VA_ARGS__)
+#define PERROR(msg) perror("BackFS CACHE ERROR: " msg)
+#endif //SYSLOG
+#else
+#define ERROR(...) /* __VA_ARGS__ */
+#define WARN(...) /* __VA_ARGS__ */
+#define INFO(...) /* __VA_ARGS__ */
+#define PERROR(msg) /* msg */
+#endif //DEBUG
+
 char *cache_dir;
 uint64_t cache_size;
 uint64_t cache_used_size;

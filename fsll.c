@@ -20,6 +20,26 @@
 #include <fcntl.h>
 #include <libgen.h>
 
+#ifdef DEBUG
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "FSLL ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "FSLL WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, "FSLL: " __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "FSLL ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "FSLL ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "FSLL WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "FSLL: " __VA_ARGS__)
+#define PERROR(msg) perror("FSLL ERROR: " msg);
+#endif //SYSLOG
+#else
+#define ERROR(...) /* __VA_ARGS__ */
+#define WARN(...) /* __VA_ARGS__ */
+#define INFO(...) /* __VA_ARGS__ */
+#define PERROR(msg) /* msg */
+#endif //DEBUG
+
 char * fsll_getlink(const char *base, const char *file)
 {
     char path[PATH_MAX];
