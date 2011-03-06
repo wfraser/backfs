@@ -772,7 +772,6 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     }
     free(full_filemap_dir);
 
-
     make_space_available(len);
 
     bucketpath = next_bucket();
@@ -825,23 +824,35 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
 
     cache_used_size += bytes_written;
 
-    if (bytes_written != len) {
-        WARN("not all bytes written to cache!\n");
+    // for some reason (filesystem metadata overhead?) this may need to loop a
+    // few times to write everything out.
+    while (bytes_written != len) {
+        INFO("not all bytes written to cache\n");
 
-        // try again?
+        // try again
         make_space_available(len - bytes_written);
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
-        cache_used_size += more_bytes_written;
-
-        if (bytes_written + more_bytes_written != len) {
-            PERROR("still not all bytes written to cache!\n");
-            errno = EIO;
-            close(fd);
-            pthread_mutex_unlock(&lock);
-            return -1;
+        if (more_bytes_written == -1) {
+            if (errno == ENOSPC) {
+                // this is normal
+                INFO("nothing written (no space on device)\n");
+                more_bytes_written = 0;
+            } else {
+                PERROR("write error");
+                close(fd);
+                pthread_mutex_unlock(&lock);
+                return -EIO;
+            }
         }
+
+        INFO("%llu more bytes written to cache (%llu total)\n",
+            (unsigned long long) more_bytes_written,
+            (unsigned long long) more_bytes_written + bytes_written);
+
+        cache_used_size += more_bytes_written;
+        bytes_written += more_bytes_written;
     }
 
     INFO("size now %llu bytes of %llu bytes (%lf%%)\n",
