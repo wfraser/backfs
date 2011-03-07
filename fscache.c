@@ -565,23 +565,32 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     bucket_to_head(bucketpath);
     
+    uint64_t bucket_mtime;
     char mtimepath[PATH_MAX];
     snprintf(mtimepath, PATH_MAX, "%s/map%s/mtime", cache_dir, filename);
     FILE *f = fopen(mtimepath, "r");
     if (f == NULL) {
         PERROR("open mtime file failed");
-        errno = EIO;
-        pthread_mutex_unlock(&lock);
-        return -1;
+        bucket_mtime = 0; // will cause invalidation
+    } else {
+        if (fscanf(f, "%llu", (unsigned long long *) &bucket_mtime) != 1) {
+            ERROR("error reading mtime file");
+
+            // debug
+            char buf[4096];
+            fseek(f, 0, SEEK_SET);
+            size_t b = fread(buf, 1, 4096, f);
+            buf[b] = '\0';
+            ERROR("mtime file contains: %u bytes: %s", b, buf);
+
+            fclose(f);
+            f = NULL;
+            unlink(mtimepath);
+
+            bucket_mtime = 0; // will cause invalidation
+        }
     }
-    uint64_t bucket_mtime;
-    if (fscanf(f, "%llu", (unsigned long long *) &bucket_mtime) != 1) {
-        ERROR("error reading mtime file");
-        errno = EIO;
-        pthread_mutex_unlock(&lock);
-        return -1;
-    }
-    fclose(f);
+    if (f) fclose(f);
     
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
