@@ -59,10 +59,12 @@ struct backfs {
     char *real_root;
     unsigned long long cache_size;
     unsigned long long block_size;
+    bool rw;
     pthread_mutex_t lock;
 };
 
 enum {
+    KEY_RW,
     KEY_HELP,
     KEY_VERSION,
 };
@@ -74,6 +76,7 @@ static struct fuse_opt backfs_opts[] = {
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
     {"block_size=%llu", offsetof(struct backfs, block_size),    0},
+    FUSE_OPT_KEY("rw",          KEY_RW),
     FUSE_OPT_KEY("-h",          KEY_HELP),
     FUSE_OPT_KEY("--help",      KEY_HELP),
     FUSE_OPT_KEY("-V",          KEY_VERSION),
@@ -92,6 +95,7 @@ void usage()
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
+        "    -o rw                  be a read-write cache (default is read-only)\n"
         "\n"
     );
 }
@@ -122,7 +126,7 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
         return -errno;
     }
 
-    if ((fi->flags & 3) != O_RDONLY) {
+    if (!backfs.rw && (fi->flags & 3) != O_RDONLY) {
         return -EACCES;
     }
 
@@ -132,10 +136,21 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
 int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
         struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/.backfs_control") != 0) {
+    if (strcmp(path, "/.backfs_control") == 0) {
+        return backfs_control_file_write(path, buf, len, offset, fi);
+    }
+
+    if (!backfs.rw) {
         return -EACCES;
     }
 
+    //oo
+    return -EIO;
+}
+
+int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
+        struct fuse_file_info *fi)
+{
     char *data = (char*)malloc(len+1);
     memcpy(data, buf, len);
     data[len] = '\0';
@@ -445,6 +460,10 @@ int backfs_opt_proc(void *data, const char *arg, int key,
         return 1;
 
     case FUSE_OPT_KEY_NONOPT:
+        return 1;
+
+    case KEY_RW:
+        backfs.rw = true;
         return 1;
     
     case KEY_HELP:
