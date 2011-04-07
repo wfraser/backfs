@@ -23,8 +23,6 @@
 
 #include <pthread.h>
 
-#include "backfs.h"
-
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
 #else
@@ -33,6 +31,26 @@
 
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
+
+#ifdef DEBUG
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "BackFS ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "BackFS WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "BackFS: " __VA_ARGS__)
+#define PERROR(msg) perror("BackFS ERROR: " msg)
+#endif //SYSLOG
+#else
+#define ERROR(...) /* __VA_ARGS__ */
+#define WARN(...) /* __VA_ARGS__ */
+#define INFO(...) /* __VA_ARGS__ */
+#define PERROR(msg) /* msg */
+#endif //DEBUG
 
 #include "fscache.h"
 
@@ -461,7 +479,7 @@ int main(int argc, char **argv)
     getcwd(cwd, PATH_MAX);
 
     if (backfs.real_root == NULL) {
-        if (args.argv[1] != NULL && (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
+        if (args.argc < 2 || (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
             fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
             usage();
             fuse_opt_add_arg(&args, "-ho");
@@ -608,8 +626,10 @@ int main(int argc, char **argv)
 
     printf("block size %llu bytes\n", backfs.block_size);
 
+    printf("initializing cache and scanning existing cache dir...\n");
     cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 
+    printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 
     return 0;

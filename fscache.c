@@ -27,6 +27,26 @@ static pthread_mutex_t lock;
 
 #include "fsll.h"
 
+#ifdef DEBUG
+#ifdef SYSLOG
+#include <syslog.h>
+#define ERROR(...) syslog(LOG_ERR, "CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) syslog(LOG_WARNING, "CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) syslog(LOG_INFO, "CACHE: " __VA_ARGS__)
+#define PERROR(msg) syslog(LOG_ERR, "CACHE ERROR: " msg ": %m")
+#else
+#define ERROR(...) fprintf(stderr, "BackFS CACHE ERROR: " __VA_ARGS__)
+#define WARN(...) fprintf(stderr, "BackFS CACHE WARNING: " __VA_ARGS__)
+#define INFO(...) fprintf(stderr, "BackFS CACHE: " __VA_ARGS__)
+#define PERROR(msg) perror("BackFS CACHE ERROR: " msg)
+#endif //SYSLOG
+#else
+#define ERROR(...) /* __VA_ARGS__ */
+#define WARN(...) /* __VA_ARGS__ */
+#define INFO(...) /* __VA_ARGS__ */
+#define PERROR(msg) /* msg */
+#endif //DEBUG
+
 char *cache_dir;
 uint64_t cache_size;
 uint64_t cache_used_size;
@@ -267,6 +287,7 @@ void trim_directory(const char *path)
             
             // if we got here, the directory has entries
             INFO("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            closedir(d);
             free(copy);
             return;
         }
@@ -281,6 +302,9 @@ void trim_directory(const char *path)
                 INFO("removed mtime file %s/mtime\n", dir);
             }
         }
+
+        closedir(d);
+        d = NULL;
 
         int result = rmdir(dir);
         if (result == -1) {
@@ -541,23 +565,32 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
 
     bucket_to_head(bucketpath);
     
+    uint64_t bucket_mtime;
     char mtimepath[PATH_MAX];
     snprintf(mtimepath, PATH_MAX, "%s/map%s/mtime", cache_dir, filename);
     FILE *f = fopen(mtimepath, "r");
     if (f == NULL) {
         PERROR("open mtime file failed");
-        errno = EIO;
-        pthread_mutex_unlock(&lock);
-        return -1;
+        bucket_mtime = 0; // will cause invalidation
+    } else {
+        if (fscanf(f, "%llu", (unsigned long long *) &bucket_mtime) != 1) {
+            ERROR("error reading mtime file");
+
+            // debug
+            char buf[4096];
+            fseek(f, 0, SEEK_SET);
+            size_t b = fread(buf, 1, 4096, f);
+            buf[b] = '\0';
+            ERROR("mtime file contains: %u bytes: %s", b, buf);
+
+            fclose(f);
+            f = NULL;
+            unlink(mtimepath);
+
+            bucket_mtime = 0; // will cause invalidation
+        }
     }
-    uint64_t bucket_mtime;
-    if (fscanf(f, "%llu", (unsigned long long *) &bucket_mtime) != 1) {
-        ERROR("error reading mtime file");
-        errno = EIO;
-        pthread_mutex_unlock(&lock);
-        return -1;
-    }
-    fclose(f);
+    if (f) fclose(f);
     
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
@@ -768,7 +801,6 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     }
     free(full_filemap_dir);
 
-
     make_space_available(len);
 
     bucketpath = next_bucket();
@@ -809,11 +841,16 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
 
     ssize_t bytes_written = write(fd, buf, len);
     if (bytes_written == -1) {
-        PERROR("write in cache_add");
-        errno = EIO;
-        close(fd);
-        pthread_mutex_unlock(&lock);
-        return -1;
+        if (errno == ENOSPC) {
+            INFO("nothing written (no space on device)\n");
+            bytes_written = 0;
+        } else {
+            PERROR("write in cache_add");
+            errno = EIO;
+            close(fd);
+            pthread_mutex_unlock(&lock);
+            return -1;
+        }
     }
 
     INFO("%llu bytes written to cache\n",
@@ -821,23 +858,35 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
 
     cache_used_size += bytes_written;
 
-    if (bytes_written != len) {
-        WARN("not all bytes written to cache!\n");
+    // for some reason (filesystem metadata overhead?) this may need to loop a
+    // few times to write everything out.
+    while (bytes_written != len) {
+        INFO("not all bytes written to cache\n");
 
-        // try again?
+        // try again
         make_space_available(len - bytes_written);
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
-        cache_used_size += more_bytes_written;
-
-        if (bytes_written + more_bytes_written != len) {
-            PERROR("still not all bytes written to cache!\n");
-            errno = EIO;
-            close(fd);
-            pthread_mutex_unlock(&lock);
-            return -1;
+        if (more_bytes_written == -1) {
+            if (errno == ENOSPC) {
+                // this is normal
+                INFO("nothing written (no space on device)\n");
+                more_bytes_written = 0;
+            } else {
+                PERROR("write error");
+                close(fd);
+                pthread_mutex_unlock(&lock);
+                return -EIO;
+            }
         }
+
+        INFO("%llu more bytes written to cache (%llu total)\n",
+            (unsigned long long) more_bytes_written,
+            (unsigned long long) more_bytes_written + bytes_written);
+
+        cache_used_size += more_bytes_written;
+        bytes_written += more_bytes_written;
     }
 
     INFO("size now %llu bytes of %llu bytes (%lf%%)\n",
