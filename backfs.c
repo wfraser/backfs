@@ -436,7 +436,7 @@ int backfs_opt_proc(void *data, const char *arg, int key,
         exit(1);
 
     case KEY_VERSION:
-        fprintf(stderr, "BackFS: BackFS\n");
+        fprintf(stderr, "BackFS: %s\n", BACKFS_VERSION);
         fuse_opt_add_arg(outargs, "--version");
         backfs_fuse_main(outargs->argc, outargs->argv, &BackFS_Opers);
         exit(0);
@@ -452,17 +452,16 @@ int main(int argc, char **argv)
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct statvfs cachedir_statvfs;
 
-    char cwd[PATH_MAX];
-    getcwd(cwd, PATH_MAX);
-    fprintf(stderr, "cwd: %s\n", cwd);
-
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: fuse_opt_parse failed\n");
         return 1;
     }
 
+    char cwd[PATH_MAX];
+    getcwd(cwd, PATH_MAX);
+
     if (backfs.real_root == NULL) {
-        if ((strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
+        if (args.argv[1] != NULL && (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
             fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
             usage();
             fuse_opt_add_arg(&args, "-ho");
