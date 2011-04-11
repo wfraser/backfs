@@ -20,25 +20,39 @@
 #include <fcntl.h>
 #include <libgen.h>
 
-#ifdef DEBUG
-#ifdef SYSLOG
+#ifndef NODEBUG
+#ifndef NOSYSLOG
 #include <syslog.h>
-#define ERROR(...) syslog(LOG_ERR, "FSLL ERROR: " __VA_ARGS__)
-#define WARN(...) syslog(LOG_WARNING, "FSLL WARNING: " __VA_ARGS__)
-#define INFO(...) syslog(LOG_INFO, "FSLL: " __VA_ARGS__)
-#define PERROR(msg) syslog(LOG_ERR, "FSLL ERROR: " msg ": %m")
+#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        syslog(LOG_ERR, "FSLL ERROR: " __VA_ARGS__)
+#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
+                        syslog(LOG_WARNING, "FSLL WARNING: " __VA_ARGS__)
+#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
+                        syslog(LOG_INFO, "FSLL: " __VA_ARGS__)
+#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
+                        syslog(LOG_DEBUG, "FSLL: " __VA_ARGS__)
+#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        syslog(LOG_ERR, "FSLL ERROR: " msg ": %m")
 #else
-#define ERROR(...) fprintf(stderr, "FSLL ERROR: " __VA_ARGS__)
-#define WARN(...) fprintf(stderr, "FSLL WARNING: " __VA_ARGS__)
-#define INFO(...) fprintf(stderr, "FSLL: " __VA_ARGS__)
-#define PERROR(msg) perror("FSLL ERROR: " msg);
-#endif //SYSLOG
+#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        fprintf(stderr, "BackFS FSLL ERROR: " __VA_ARGS__)
+#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
+                        fprintf(stderr, "BackFS FSLL WARNING: " __VA_ARGS__)
+#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
+                        fprintf(stderr, "BackFS FSLL: " __VA_ARGS__)
+#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
+                        fprintf(stderr, "BackFS FSLL: " __VA_ARGS__)
+#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        perror("BackFS FSLL ERROR: " msg)
+#endif //NOSYSLOG
 #else
-#define ERROR(...) /* __VA_ARGS__ */
-#define WARN(...) /* __VA_ARGS__ */
-#define INFO(...) /* __VA_ARGS__ */
-#define PERROR(msg) /* msg */
-#endif //DEBUG
+#define ERROR(...) /* nothing */
+#define WARN(...) /* nothing */
+#define INFO(...) /* nothing */
+#define PERROR(msg) /* nothing */
+#endif //NODEBUG
+
+extern int backfs_log_level;
 
 char * fsll_getlink(const char *base, const char *file)
 {

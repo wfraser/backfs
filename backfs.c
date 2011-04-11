@@ -32,25 +32,37 @@
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
 
-#ifdef DEBUG
-#ifdef SYSLOG
+#ifndef NODEBUG
+#ifndef NOSYSLOG
 #include <syslog.h>
-#define ERROR(...) syslog(LOG_ERR, "ERROR: " __VA_ARGS__)
-#define WARN(...) syslog(LOG_WARNING, "WARNING: " __VA_ARGS__)
-#define INFO(...) syslog(LOG_INFO, __VA_ARGS__)
-#define PERROR(msg) syslog(LOG_ERR, "ERROR: " msg ": %m")
+#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        syslog(LOG_ERR, "ERROR: " __VA_ARGS__)
+#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
+                        syslog(LOG_WARNING, "WARNING: " __VA_ARGS__)
+#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
+                        syslog(LOG_INFO, __VA_ARGS__)
+#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
+                        syslog(LOG_DEBUG, __VA_ARGS__)
+#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        syslog(LOG_ERR, "ERROR: " msg ": %m")
 #else
-#define ERROR(...) fprintf(stderr, "BackFS ERROR: " __VA_ARGS__)
-#define WARN(...) fprintf(stderr, "BackFS WARNING: " __VA_ARGS__)
-#define INFO(...) fprintf(stderr, "BackFS: " __VA_ARGS__)
-#define PERROR(msg) perror("BackFS ERROR: " msg)
-#endif //SYSLOG
+#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        fprintf(stderr, "BackFS ERROR: " __VA_ARGS__)
+#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
+                        fprintf(stderr, "BackFS WARNING: " __VA_ARGS__)
+#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
+                        fprintf(stderr, "BackFS: " __VA_ARGS__)
+#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
+                        fprintf(stderr, "BackFS: " __VA_ARGS__)
+#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
+                        perror("BackFS ERROR: " msg)
+#endif //NOSYSLOG
 #else
-#define ERROR(...) /* __VA_ARGS__ */
-#define WARN(...) /* __VA_ARGS__ */
-#define INFO(...) /* __VA_ARGS__ */
-#define PERROR(msg) /* msg */
-#endif //DEBUG
+#define ERROR(...) /* nothing */
+#define WARN(...) /* nothing */
+#define INFO(...) /* nothing */
+#define PERROR(msg) /* nothing */
+#endif //NODEBUG
 
 #include "fscache.h"
 
@@ -63,9 +75,19 @@ struct backfs {
 };
 
 enum {
+    KEY_DEBUG,
     KEY_HELP,
     KEY_VERSION,
 };
+
+enum {
+    LOG_LEVEL_DEBUG,
+    LOG_LEVEL_INFO,
+    LOG_LEVEL_WARN,
+    LOG_LEVEL_ERROR,
+};
+
+int backfs_log_level;
 
 static struct backfs backfs;
 #define BACKFS_OPT(t,p,v) { t, offsetof(struct 
@@ -74,6 +96,9 @@ static struct fuse_opt backfs_opts[] = {
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
     {"block_size=%llu", offsetof(struct backfs, block_size),    0},
+    FUSE_OPT_KEY("debug",       KEY_DEBUG),
+    FUSE_OPT_KEY("-d",          KEY_DEBUG),
+    FUSE_OPT_KEY("--debug",     KEY_DEBUG),
     FUSE_OPT_KEY("-h",          KEY_HELP),
     FUSE_OPT_KEY("--help",      KEY_HELP),
     FUSE_OPT_KEY("-V",          KEY_VERSION),
@@ -92,13 +117,15 @@ void usage()
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
+        "    -d --debug -o debug    Enable debugging mode. BackFS will not fork to\n"
+        "                           background and enables all debugging messages.\n"
         "\n"
     );
 }
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
-    INFO("BackFS: open %s\n", path);
+    DEBUG("BackFS: open %s\n", path);
 
     if (strcmp("/.backfs_control", path) == 0) {
         if ((fi->flags & 3) != O_WRONLY)
@@ -152,7 +179,7 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
     if (*data == ' ' || *data == '\n')
         data++;
 
-    INFO("BackFS: command(%s) data(%s)\n", command, data);
+    DEBUG("BackFS: command(%s) data(%s)\n", command, data);
 
     if (strcmp(command, "test") == 0) {
         // nonsensical error "Cross-device link"
@@ -176,7 +203,7 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
-    INFO("BackFS: getattr %s\n", path);
+    DEBUG("BackFS: getattr %s\n", path);
 
     if (strcmp(path, "/.backfs_control") == 0) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -214,7 +241,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     if (ret == -1) {
         return -errno;
     } else {
-        INFO("BackFS: mode: %o\n", stbuf->st_mode);
+        DEBUG("BackFS: mode: %o\n", stbuf->st_mode);
         return 0;
     }
 }
@@ -269,12 +296,12 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         pthread_mutex_lock(&backfs.lock);
 
         if (first) {
-            INFO("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
+            DEBUG("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
                     offset, offset+size, (unsigned long) backfs.block_size);
             first = false;
         }
 
-        INFO("reading block %lu, 0x%lx to 0x%lx\n",
+        DEBUG("reading block %lu, 0x%lx to 0x%lx\n",
                 (unsigned long) block, block_offset, block_offset + block_size);
                 
         char real[PATH_MAX];
@@ -303,7 +330,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             // need to do a real read
             //
 
-            INFO("reading block %lu from real file: %s\n",
+            DEBUG("reading block %lu from real file: %s\n",
                     (unsigned long) block, real);
             int fd = open(real, O_RDONLY);
             if (fd == -1) {
@@ -323,8 +350,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 return -EIO;
             } else {
                 close(fd);
-                INFO("got %lu bytes from real file\n", (unsigned long) nread);
-                INFO("adding to cache\n");
+                DEBUG("got %lu bytes from real file\n", (unsigned long) nread);
+                DEBUG("adding to cache\n");
                 cache_add(path, block, block_buf, nread, real_stat.st_mtime);
 
                 pthread_mutex_unlock(&backfs.lock);
@@ -335,27 +362,27 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 free(block_buf);
 
                 if (nread < block_size) {
-                    INFO("read less than requested, %lu instead of %lu\n", 
+                    DEBUG("read less than requested, %lu instead of %lu\n", 
                             (unsigned long) nread, (unsigned long) block_size);
                     bytes_read += nread;
-                    INFO("bytes_read=%lu\n", 
+                    DEBUG("bytes_read=%lu\n", 
                             (unsigned long) bytes_read);
                     return bytes_read;
                 } else {
-                    INFO("%lu bytes for fuse buffer\n", block_size);
+                    DEBUG("%lu bytes for fuse buffer\n", block_size);
                     bytes_read += block_size;
-                    INFO("bytes_read=%lu\n", (unsigned long) bytes_read);
+                    DEBUG("bytes_read=%lu\n", (unsigned long) bytes_read);
                 }
             }
         } else {
             pthread_mutex_unlock(&backfs.lock);
-            INFO("got %lu bytes from cache\n", (unsigned long) bread);
+            DEBUG("got %lu bytes from cache\n", (unsigned long) bread);
             bytes_read += bread;
-            INFO("bytes_read=%lu\n", (unsigned long) bytes_read);
+            DEBUG("bytes_read=%lu\n", (unsigned long) bytes_read);
 
             if (bread < block_size) {
                 // must have read the end of file
-                INFO("fewer than requested\n");
+                DEBUG("fewer than requested\n");
                 return bytes_read;
             }
         }
@@ -367,7 +394,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
 int backfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-    INFO("opendir %s\n", path);
+    DEBUG("opendir %s\n", path);
 
     char real[PATH_MAX];
     snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
@@ -387,7 +414,7 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
 int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
-    INFO("readdir %s\n", path);
+    DEBUG("readdir %s\n", path);
 
     DIR *dir = (DIR*)(fi->fh);
 
@@ -446,9 +473,14 @@ int backfs_opt_proc(void *data, const char *arg, int key,
 
     case FUSE_OPT_KEY_NONOPT:
         return 1;
+
+    case KEY_DEBUG:
+        fuse_opt_add_arg(outargs, "debug");
+        backfs_log_level = LOG_LEVEL_DEBUG;
+        return 1;
     
     case KEY_HELP:
-        fuse_opt_add_arg(outargs, "-ho");
+        fuse_opt_add_arg(outargs, "-h");
         usage();
         backfs_fuse_main(outargs->argc, outargs->argv, &BackFS_Opers);
         exit(1);
@@ -469,6 +501,8 @@ int main(int argc, char **argv)
 {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct statvfs cachedir_statvfs;
+
+    backfs_log_level = LOG_LEVEL_WARN;
 
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: fuse_opt_parse failed\n");
@@ -518,7 +552,7 @@ int main(int argc, char **argv)
         sprintf(backfs.cache_dir, "%s/%s", cwd, rel);
     }
 
-#ifdef SYSLOG
+#ifndef NOSYSLOG
     openlog("BackFS", 0, LOG_USER);
 #endif
 
