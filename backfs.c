@@ -44,6 +44,7 @@ struct backfs {
 };
 
 enum {
+    KEY_VERBOSE,
     KEY_DEBUG,
     KEY_HELP,
     KEY_VERSION,
@@ -58,6 +59,9 @@ static struct fuse_opt backfs_opts[] = {
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
     {"block_size=%llu", offsetof(struct backfs, block_size),    0},
+    FUSE_OPT_KEY("verbose",     KEY_VERBOSE),
+    FUSE_OPT_KEY("-v",          KEY_VERBOSE),
+    FUSE_OPT_KEY("--verbose",   KEY_VERBOSE),
     FUSE_OPT_KEY("debug",       KEY_DEBUG),
     FUSE_OPT_KEY("-d",          KEY_DEBUG),
     FUSE_OPT_KEY("--debug",     KEY_DEBUG),
@@ -434,6 +438,10 @@ int backfs_opt_proc(void *data, const char *arg, int key,
         return 1;
 
     case FUSE_OPT_KEY_NONOPT:
+        return 1;
+
+    case KEY_VERBOSE:
+        backfs_log_level = LOG_LEVEL_INFO;
         return 1;
 
     case KEY_DEBUG:
