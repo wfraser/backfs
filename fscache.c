@@ -25,39 +25,9 @@
 #include <pthread.h>
 static pthread_mutex_t lock;
 
+#define BACKFS_LOG_SUBSYS "Cache"
+#include "global.h"
 #include "fsll.h"
-
-#ifndef NODEBUG
-#ifndef NOSYSLOG
-#include <syslog.h>
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "Cache ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        syslog(LOG_WARNING, "Cache WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        syslog(LOG_INFO, "Cache:" __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        syslog(LOG_DEBUG, "Cache: " __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "Cache ERROR: " msg ": %m")
-#else
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        fprintf(stderr, "BackFS Cache ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        fprintf(stderr, "BackFS Cache WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        fprintf(stderr, "BackFS Cache: " __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        fprintf(stderr, "BackFS Cache: " __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        perror("BackFS Cache ERROR: " msg)
-#endif //NOSYSLOG
-#else
-#define ERROR(...) /* nothing */
-#define WARN(...) /* nothing */
-#define INFO(...) /* nothing */
-#define PERROR(msg) /* nothing */
-#endif //NODEBUG
 
 extern int backfs_log_level;
 
@@ -595,7 +565,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
             fseek(f, 0, SEEK_SET);
             size_t b = fread(buf, 1, 4096, f);
             buf[b] = '\0';
-            ERROR("mtime file contains: %u bytes: %s", b, buf);
+            ERROR("mtime file contains: %u bytes: %s", (unsigned int) b, buf);
 
             fclose(f);
             f = NULL;

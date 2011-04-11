@@ -23,6 +23,9 @@
 
 #include <pthread.h>
 
+#include "global.h"
+#include "fscache.h"
+
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
 #else
@@ -31,40 +34,6 @@
 
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
-
-#ifndef NODEBUG
-#ifndef NOSYSLOG
-#include <syslog.h>
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        syslog(LOG_WARNING, "WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        syslog(LOG_INFO, __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        syslog(LOG_DEBUG, __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "ERROR: " msg ": %m")
-#else
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        fprintf(stderr, "BackFS ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        fprintf(stderr, "BackFS WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        fprintf(stderr, "BackFS: " __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        fprintf(stderr, "BackFS: " __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        perror("BackFS ERROR: " msg)
-#endif //NOSYSLOG
-#else
-#define ERROR(...) /* nothing */
-#define WARN(...) /* nothing */
-#define INFO(...) /* nothing */
-#define PERROR(msg) /* nothing */
-#endif //NODEBUG
-
-#include "fscache.h"
 
 struct backfs { 
     char *cache_dir;
@@ -78,13 +47,6 @@ enum {
     KEY_DEBUG,
     KEY_HELP,
     KEY_VERSION,
-};
-
-enum {
-    LOG_LEVEL_DEBUG,
-    LOG_LEVEL_INFO,
-    LOG_LEVEL_WARN,
-    LOG_LEVEL_ERROR,
 };
 
 int backfs_log_level;

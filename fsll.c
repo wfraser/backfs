@@ -20,37 +20,8 @@
 #include <fcntl.h>
 #include <libgen.h>
 
-#ifndef NODEBUG
-#ifndef NOSYSLOG
-#include <syslog.h>
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "FSLL ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        syslog(LOG_WARNING, "FSLL WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        syslog(LOG_INFO, "FSLL: " __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        syslog(LOG_DEBUG, "FSLL: " __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        syslog(LOG_ERR, "FSLL ERROR: " msg ": %m")
-#else
-#define ERROR(...)  if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        fprintf(stderr, "BackFS FSLL ERROR: " __VA_ARGS__)
-#define WARN(...)   if (backfs_log_level >= LOG_LEVEL_WARN) \
-                        fprintf(stderr, "BackFS FSLL WARNING: " __VA_ARGS__)
-#define INFO(...)   if (backfs_log_level >= LOG_LEVEL_INFO) \
-                        fprintf(stderr, "BackFS FSLL: " __VA_ARGS__)
-#define DEBUG(...)  if (backfs_log_level >= LOG_LEVEL_DEBUG) \
-                        fprintf(stderr, "BackFS FSLL: " __VA_ARGS__)
-#define PERROR(msg) if (backfs_log_level >= LOG_LEVEL_ERROR) \
-                        perror("BackFS FSLL ERROR: " msg)
-#endif //NOSYSLOG
-#else
-#define ERROR(...) /* nothing */
-#define WARN(...) /* nothing */
-#define INFO(...) /* nothing */
-#define PERROR(msg) /* nothing */
-#endif //NODEBUG
+#define BACKFS_LOG_SUBSYS "FSLL"
+#include "global.h"
 
 extern int backfs_log_level;
 
@@ -199,20 +170,22 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     char *p = fsll_getlink(path, "prev");
 
     if ((p == NULL) ^ (strcmp(h, path) == 0)) {
-        if (p)
+        if (p) {
             ERROR("head entry has a prev: %s\n", path);
-        else
+        } else {
             ERROR("entry has no prev but is not head: %s\n", path);
+        }
         fsll_dump(base, head, tail);
         // cowardly refusing to break things farther
         return;
     }
 
     if ((n == NULL) ^ (strcmp(t, path) == 0)) {
-        if (n)
+        if (n) {
             ERROR("tail entry has a next: %s\n", path);
-        else
+        } else {
             ERROR("entry has no next but is not tail: %s\n", path);
+        }
         fsll_dump(base, head, tail);
         return;
     }
