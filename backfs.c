@@ -83,6 +83,8 @@ void usage()
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
+        "    -v --verbose           Enable informational messages.\n"
+        "       -o verbose\n"
         "    -d --debug -o debug    Enable debugging mode. BackFS will not fork to\n"
         "                           background and enables all debugging messages.\n"
         "\n"
