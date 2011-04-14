@@ -25,33 +25,17 @@
 #include <pthread.h>
 static pthread_mutex_t lock;
 
+#define BACKFS_LOG_SUBSYS "Cache"
+#include "global.h"
 #include "fsll.h"
 
-#ifdef DEBUG
-#ifdef SYSLOG
-#include <syslog.h>
-#define ERROR(...) syslog(LOG_ERR, "CACHE ERROR: " __VA_ARGS__)
-#define WARN(...) syslog(LOG_WARNING, "CACHE WARNING: " __VA_ARGS__)
-#define INFO(...) syslog(LOG_INFO, "CACHE: " __VA_ARGS__)
-#define PERROR(msg) syslog(LOG_ERR, "CACHE ERROR: " msg ": %m")
-#else
-#define ERROR(...) fprintf(stderr, "BackFS CACHE ERROR: " __VA_ARGS__)
-#define WARN(...) fprintf(stderr, "BackFS CACHE WARNING: " __VA_ARGS__)
-#define INFO(...) fprintf(stderr, "BackFS CACHE: " __VA_ARGS__)
-#define PERROR(msg) perror("BackFS CACHE ERROR: " msg)
-#endif //SYSLOG
-#else
-#define ERROR(...) /* __VA_ARGS__ */
-#define WARN(...) /* __VA_ARGS__ */
-#define INFO(...) /* __VA_ARGS__ */
-#define PERROR(msg) /* msg */
-#endif //DEBUG
+extern int backfs_log_level;
 
-char *cache_dir;
-uint64_t cache_size;
-uint64_t cache_used_size;
-bool use_whole_device;
-uint64_t bucket_max_size;
+static char *cache_dir;
+static uint64_t cache_size;
+static uint64_t cache_used_size;
+static bool use_whole_device;
+static uint64_t bucket_max_size;
 
 uint64_t get_cache_used_size(const char *root)
 {
@@ -71,7 +55,7 @@ uint64_t get_cache_used_size(const char *root)
             ERROR("\tcaused by stat(%s)\n", buf);
             abort();
         }
-        INFO("bucket %s: %llu bytes\n",
+        DEBUG("bucket %s: %llu bytes\n",
                 e->d_name, (unsigned long long) s.st_size);
         total += s.st_size;
     }
@@ -160,7 +144,7 @@ char * next_bucket()
 {
     char *bucket = fsll_getlink(cache_dir, "buckets/free_head");
     if (bucket != NULL) {
-        INFO("re-using free bucket %s\n", bucketname(bucket));
+        DEBUG("re-using free bucket %s\n", bucketname(bucket));
 
         // disconnect from free queue
         fsll_disconnect(cache_dir, bucket,
@@ -206,7 +190,7 @@ char * next_bucket()
             fclose(f);
         }
 
-        INFO("making new bucket %lu\n", (unsigned long) next);
+        DEBUG("making new bucket %lu\n", (unsigned long) next);
 
         char *new_bucket = makebucket(next);
 
@@ -219,7 +203,7 @@ char * next_bucket()
  */
 void bucket_to_head(const char *bucketpath)
 {
-    INFO("bucket_to_head(%s)\n", bucketpath);
+    DEBUG("bucket_to_head(%s)\n", bucketpath);
     return fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
 }
 
@@ -286,7 +270,7 @@ void trim_directory(const char *path)
             }
             
             // if we got here, the directory has entries
-            INFO("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            DEBUG("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
             closedir(d);
             free(copy);
             return;
@@ -299,7 +283,7 @@ void trim_directory(const char *path)
                 PERROR("in trim_directory, unable to unlink mtime file");
                 ERROR("\tpath was %s\n", mtime);
             } else {
-                INFO("removed mtime file %s/mtime\n", dir);
+                DEBUG("removed mtime file %s/mtime\n", dir);
             }
         }
 
@@ -316,7 +300,7 @@ void trim_directory(const char *path)
             free(copy);
             return;
         } else {
-            INFO("removed empty map directory %s\n", dir);
+            DEBUG("removed empty map directory %s\n", dir);
         }
 
         dir = dirname(dir);
@@ -336,7 +320,7 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
 {
     char *parent = fsll_getlink(bucketpath, "parent");
     if (parent && fsll_file_exists(parent, NULL)) {
-        INFO("bucket parent: %s\n", parent);
+        DEBUG("bucket parent: %s\n", parent);
         if (unlink(parent) == -1) {
             PERROR("unlink parent in free_bucket");
         }
@@ -394,12 +378,12 @@ inline uint64_t free_bucket(const char *bucketpath)
 int cache_invalidate_bucket(const char *filename, uint32_t block, 
                                 const char *bucket)
 {
-    INFO("invalidating block %lu of file %s\n",
+    DEBUG("invalidating block %lu of file %s\n",
             (unsigned long) block, filename);
 
     uint64_t freed_size = free_bucket_mid_queue(bucket);
 
-    INFO("freed %llu bytes in bucket %s\n",
+    DEBUG("freed %llu bytes in bucket %s\n",
             (unsigned long long) freed_size,
             bucketname(bucket));
 
@@ -425,7 +409,7 @@ int cache_invalidate_file_real(const char *filename)
         if (strcmp(e->d_name, "mtime") == 0) {
             char mtime[PATH_MAX];
             snprintf(mtime, PATH_MAX, "%s/mtime", mappath);
-            INFO("removed mtime file %s\n", mtime);
+            DEBUG("removed mtime file %s\n", mtime);
             unlink(mtime);
             continue;
         }
@@ -499,9 +483,9 @@ int cache_free_orphan_buckets()
 
         if (fsll_file_exists(bucketpath, "data") &&
                 (parent == NULL || !fsll_file_exists(parent, NULL))) {
-            INFO("bucket %s is an orphan", e->d_name);
+            DEBUG("bucket %s is an orphan", e->d_name);
             if (parent) {
-                INFO("\tparent was %s\n", parent);
+                DEBUG("\tparent was %s\n", parent);
             }
             free_bucket_mid_queue(bucketpath);
         }
@@ -538,7 +522,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         return 0;
     }
 
-    INFO("getting block %lu of file %s\n", (unsigned long) block, filename);
+    DEBUG("getting block %lu of file %s\n", (unsigned long) block, filename);
 
     //###
     pthread_mutex_lock(&lock);
@@ -550,7 +534,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     ssize_t bplen;
     if ((bplen = readlink(mapfile, bucketpath, PATH_MAX-1)) == -1) {
         if (errno == ENOENT || errno == ENOTDIR) {
-            INFO("block not in cache\n");
+            DEBUG("block not in cache\n");
             errno = ENOENT;
             pthread_mutex_unlock(&lock);
             return -1;
@@ -581,7 +565,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
             fseek(f, 0, SEEK_SET);
             size_t b = fread(buf, 1, 4096, f);
             buf[b] = '\0';
-            ERROR("mtime file contains: %u bytes: %s", b, buf);
+            ERROR("mtime file contains: %u bytes: %s", (unsigned int) b, buf);
 
             fclose(f);
             f = NULL;
@@ -595,10 +579,10 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
         if (bucket_mtime < (uint64_t)mtime) {
-            INFO("cache data is %llu seconds older than the data caller wants\n",
+            DEBUG("cache data is %llu seconds older than the data caller wants\n",
                  (unsigned long long) mtime - bucket_mtime);
         } else {
-            INFO("cache data is %llu seconds newer than the data caller wants\n",
+            DEBUG("cache data is %llu seconds newer than the data caller wants\n",
                  (unsigned long long) bucket_mtime - mtime);
         }
         cache_invalidate_file_real(filename);
@@ -659,7 +643,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     }
 
     if (*bytes_read != len) {
-        INFO("read fewer than requested bytes from cache file: %llu instead of %llu\n", 
+        DEBUG("read fewer than requested bytes from cache file: %llu instead of %llu\n", 
                 (unsigned long long) *bytes_read,
                 (unsigned long long) len
         );
@@ -707,7 +691,7 @@ void make_space_available(uint64_t bytes_needed)
         bytes_needed = bytes_needed - dev_free;
     }
 
-    INFO("need to free %llu bytes\n",
+    DEBUG("need to free %llu bytes\n",
             (unsigned long long) bytes_needed);
 
     while (bytes_freed < bytes_needed) {
@@ -719,13 +703,13 @@ void make_space_available(uint64_t bytes_needed)
         }
 
         uint64_t f = free_bucket(b);
-        INFO("freed %llu bytes in bucket #%lu\n",
+        DEBUG("freed %llu bytes in bucket #%lu\n",
                 (unsigned long long) f, (unsigned long) bucket_path_to_number(b));
         free(b);
         bytes_freed += f;
     }
 
-    INFO("freed %llu bytes total\n",
+    DEBUG("freed %llu bytes total\n",
             (unsigned long long) bytes_freed);
 }
 
@@ -749,7 +733,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     char fileandblock[PATH_MAX];
     snprintf(fileandblock, PATH_MAX, "map%s/%lu", filename, (unsigned long) block);
 
-    INFO("writing %llu bytes to %s\n", (unsigned long long) len, fileandblock);
+    DEBUG("writing %llu bytes to %s\n", (unsigned long long) len, fileandblock);
 
     //###
     pthread_mutex_lock(&lock);
@@ -772,8 +756,8 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     snprintf(full_filemap_dir, strlen(cache_dir)+5+strlen(filename)+1, "%s/map%s/",
             cache_dir, filename);
 
-    INFO("map file = %s\n", filemap);
-    INFO("full filemap dir = %s\n", full_filemap_dir);
+    DEBUG("map file = %s\n", filemap);
+    DEBUG("full filemap dir = %s\n", full_filemap_dir);
 
     if (!fsll_file_exists(cache_dir, filemap)) {
         free(filemap);
@@ -784,7 +768,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
                 char *component = (char*)malloc(i+1);
                 strncpy(component, full_filemap_dir, i+1);
                 component[i] = '\0';
-                INFO("making %s\n", component);
+                DEBUG("making %s\n", component);
                 if(mkdir(component, 0700) == -1 && errno != EEXIST) {
                     PERROR("mkdir in cache_add");
                     ERROR("\tcaused by mkdir(%s)\n", component);
@@ -804,7 +788,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     make_space_available(len);
 
     bucketpath = next_bucket();
-    INFO("bucket path = %s\n", bucketpath);
+    DEBUG("bucket path = %s\n", bucketpath);
 
     fsll_makelink(cache_dir, fileandblock, bucketpath);
 
@@ -842,7 +826,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     ssize_t bytes_written = write(fd, buf, len);
     if (bytes_written == -1) {
         if (errno == ENOSPC) {
-            INFO("nothing written (no space on device)\n");
+            DEBUG("nothing written (no space on device)\n");
             bytes_written = 0;
         } else {
             PERROR("write in cache_add");
@@ -853,7 +837,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
         }
     }
 
-    INFO("%llu bytes written to cache\n",
+    DEBUG("%llu bytes written to cache\n",
             (unsigned long long) bytes_written);
 
     cache_used_size += bytes_written;
@@ -861,7 +845,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     // for some reason (filesystem metadata overhead?) this may need to loop a
     // few times to write everything out.
     while (bytes_written != len) {
-        INFO("not all bytes written to cache\n");
+        DEBUG("not all bytes written to cache\n");
 
         // try again
         make_space_available(len - bytes_written);
@@ -871,7 +855,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
         if (more_bytes_written == -1) {
             if (errno == ENOSPC) {
                 // this is normal
-                INFO("nothing written (no space on device)\n");
+                DEBUG("nothing written (no space on device)\n");
                 more_bytes_written = 0;
             } else {
                 PERROR("write error");
@@ -881,7 +865,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
             }
         }
 
-        INFO("%llu more bytes written to cache (%llu total)\n",
+        DEBUG("%llu more bytes written to cache (%llu total)\n",
             (unsigned long long) more_bytes_written,
             (unsigned long long) more_bytes_written + bytes_written);
 
@@ -889,7 +873,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
         bytes_written += more_bytes_written;
     }
 
-    INFO("size now %llu bytes of %llu bytes (%lf%%)\n",
+    DEBUG("size now %llu bytes of %llu bytes (%lf%%)\n",
             (unsigned long long) cache_used_size,
             (unsigned long long) cache_size,
             (double)100 * cache_used_size / cache_size
