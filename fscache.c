@@ -3,6 +3,8 @@
  * Copyright (c) 2010-2011 William R. Fraser
  */
 
+#define _XOPEN_SOURCE 500 // for pread()
+
 #include "fscache.h"
 
 #include <stdio.h>
