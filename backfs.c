@@ -83,6 +83,7 @@ void usage()
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
+        "    -o block_size          cache block size. defaults to 128K\n"
         "    -v --verbose           Enable informational messages.\n"
         "       -o verbose\n"
         "    -d --debug -o debug    Enable debugging mode. BackFS will not fork to\n"
@@ -609,7 +610,9 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    bool use_whole_device = false;
     if (backfs.cache_size == 0) {
+        use_whole_device = true;
         backfs.cache_size = device_size;
     }
 
@@ -628,9 +631,10 @@ int main(int argc, char **argv)
         cache_units = "B";
     }
 
-    printf("cache size %.2lf %s\n"
+    printf("cache size %.2lf %s%s\n"
         , cache_human
         , cache_units
+        , use_whole_device ? " (using whole device)" : ""
     );
 
     printf("block size %llu bytes\n", backfs.block_size);
