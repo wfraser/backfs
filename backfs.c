@@ -87,12 +87,54 @@ void usage()
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
         "    -o rw                  be a read-write cache (default is read-only)\n"
+        "    -o block_size          cache block size. defaults to 128K\n"
         "    -v --verbose           Enable informational messages.\n"
         "       -o verbose\n"
         "    -d --debug -o debug    Enable debugging mode. BackFS will not fork to\n"
         "                           background and enables all debugging messages.\n"
         "\n"
     );
+}
+
+int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
+        struct fuse_file_info *fi)
+{
+    char *data = (char*)malloc(len+1);
+    memcpy(data, buf, len);
+    data[len] = '\0';
+
+    char command[20];
+    char *c = command;
+    while (*data != ' ' && *data != '\n' && *data != '\0') {
+        *c = *data;
+        c++;
+        data++;
+    }
+
+    *c = '\0';
+    if (*data == ' ' || *data == '\n')
+        data++;
+
+    DEBUG("BackFS: command(%s) data(%s)\n", command, data);
+
+    if (strcmp(command, "test") == 0) {
+        // nonsensical error "Cross-device link"
+        return -EXDEV;
+    } else if (strcmp(command, "invalidate") == 0) {
+        int err = cache_invalidate_file(data);
+        if (err != 0)
+            return err;
+    } else if (strcmp(command, "free_orphans") == 0) {
+        int err = cache_free_orphan_buckets();
+        if (err != 0)
+            return err;
+    } else if (strcmp(command, "noop") == 0) {
+        // test command; do nothing
+    } else {
+        return -EBADMSG;
+    }
+
+    return len;
 }
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
@@ -141,47 +183,6 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
     //TODO
     return -EIO;
-}
-
-int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
-        struct fuse_file_info *fi)
-{
-    char *data = (char*)malloc(len+1);
-    memcpy(data, buf, len);
-    data[len] = '\0';
-
-    char command[20];
-    char *c = command;
-    while (*data != ' ' && *data != '\n' && *data != '\0') {
-        *c = *data;
-        c++;
-        data++;
-    }
-
-    *c = '\0';
-    if (*data == ' ' || *data == '\n')
-        data++;
-
-    DEBUG("BackFS: command(%s) data(%s)\n", command, data);
-
-    if (strcmp(command, "test") == 0) {
-        // nonsensical error "Cross-device link"
-        return -EXDEV;
-    } else if (strcmp(command, "invalidate") == 0) {
-        int err = cache_invalidate_file(data);
-        if (err != 0)
-            return err;
-    } else if (strcmp(command, "free_orphans") == 0) {
-        int err = cache_free_orphan_buckets();
-        if (err != 0)
-            return err;
-    } else if (strcmp(command, "noop") == 0) {
-        // test command; do nothing
-    } else {
-        return -EBADMSG;
-    }
-
-    return len;
 }
 
 int backfs_getattr(const char *path, struct stat *stbuf)
@@ -280,12 +281,16 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         if (first) {
             DEBUG("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
-                    offset, offset+size, (unsigned long) backfs.block_size);
+                    (unsigned long) offset,
+                    (unsigned long) offset+size,
+                    (unsigned long) backfs.block_size);
             first = false;
         }
 
         DEBUG("reading block %lu, 0x%lx to 0x%lx\n",
-                (unsigned long) block, block_offset, block_offset + block_size);
+                (unsigned long) block,
+                (unsigned long) block_offset,
+                (unsigned long) block_offset + block_size);
                 
         char real[PATH_MAX];
         snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
@@ -352,7 +357,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                             (unsigned long) bytes_read);
                     return bytes_read;
                 } else {
-                    DEBUG("%lu bytes for fuse buffer\n", block_size);
+                    DEBUG("%lu bytes for fuse buffer\n", 
+                            (unsigned long) block_size);
                     bytes_read += block_size;
                     DEBUG("bytes_read=%lu\n", (unsigned long) bytes_read);
                 }
@@ -389,7 +395,7 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
         return -errno;
     }
 
-    fi->fh = (uint64_t) dir;
+    fi->fh = (uint64_t)(long)dir;
 
     return 0;
 }
@@ -399,7 +405,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
     DEBUG("readdir %s\n", path);
 
-    DIR *dir = (DIR*)(fi->fh);
+    DIR *dir = (DIR*)(long)(fi->fh);
 
     if (dir == NULL) {
         ERROR("got null dir handle");
@@ -643,9 +649,10 @@ int main(int argc, char **argv)
         cache_units = "B";
     }
 
-    printf("cache size %.2lf %s\n"
+    printf("cache size %.2lf %s%s\n"
         , cache_human
         , cache_units
+        , use_whole_device ? " (using whole device)" : ""
     );
 
     printf("block size %llu bytes\n", backfs.block_size);
