@@ -63,7 +63,9 @@ static struct fuse_opt backfs_opts[] = {
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
     {"block_size=%llu", offsetof(struct backfs, block_size),    0},
+#ifdef BACKFS_RW
     FUSE_OPT_KEY("rw",          KEY_RW),
+#endif
     FUSE_OPT_KEY("verbose",     KEY_VERBOSE),
     FUSE_OPT_KEY("-v",          KEY_VERBOSE),
     FUSE_OPT_KEY("--verbose",   KEY_VERBOSE),
@@ -88,7 +90,9 @@ void usage()
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
+#ifdef BACKFS_RW
         "    -o rw                  be a read-write cache (default is read-only)\n"
+#endif
         "    -o block_size          cache block size. defaults to 128K\n"
         "    -v --verbose           Enable informational messages.\n"
         "       -o verbose\n"
