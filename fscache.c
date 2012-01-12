@@ -32,6 +32,7 @@ static pthread_mutex_t lock;
 #include "fsll.h"
 
 extern int backfs_log_level;
+extern bool backfs_log_stderr;
 
 static char *cache_dir;
 static uint64_t cache_size;
@@ -206,7 +207,7 @@ char * next_bucket()
 void bucket_to_head(const char *bucketpath)
 {
     DEBUG("bucket_to_head(%s)\n", bucketpath);
-    return fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
+    fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
 }
 
 /*
@@ -364,12 +365,12 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
     }
 }
 
-inline uint64_t free_bucket_mid_queue(const char *bucketpath)
+uint64_t free_bucket_mid_queue(const char *bucketpath)
 {
     return free_bucket_real(bucketpath, false);
 }
 
-inline uint64_t free_bucket(const char *bucketpath)
+uint64_t free_bucket(const char *bucketpath)
 {
     return free_bucket_real(bucketpath, true);
 }
@@ -485,7 +486,7 @@ int cache_free_orphan_buckets()
 
         if (fsll_file_exists(bucketpath, "data") &&
                 (parent == NULL || !fsll_file_exists(parent, NULL))) {
-            DEBUG("bucket %s is an orphan", e->d_name);
+            DEBUG("bucket %s is an orphan\n", e->d_name);
             if (parent) {
                 DEBUG("\tparent was %s\n", parent);
             }

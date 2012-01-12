@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <errno.h>
@@ -53,6 +54,7 @@ enum {
 };
 
 int backfs_log_level;
+bool backfs_log_stderr = false;
 
 static struct backfs backfs;
 #define BACKFS_OPT(t,p,v) { t, offsetof(struct 
@@ -471,8 +473,9 @@ int backfs_opt_proc(void *data, const char *arg, int key,
         return 1;
 
     case KEY_DEBUG:
-        fuse_opt_add_arg(outargs, "debug");
+        fuse_opt_add_arg(outargs, "-d");
         backfs_log_level = LOG_LEVEL_DEBUG;
+        backfs_log_stderr = true;
         return 1;
     
     case KEY_HELP:

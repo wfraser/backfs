@@ -1,6 +1,8 @@
 PREFIX=/usr/local
 
-CFLAGS=-Wall -g3 -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -I/usr/include/fuse -DBACKFS_VERSION="\"$(VERSION)\""
+DEFINES=-D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -D_POSIX_C_SOURCE=201201
+
+CFLAGS=-std=c1x -pedantic -g3 $(DEFINES) -I/usr/include/fuse -DBACKFS_VERSION="\"$(VERSION)\""
 
 VERSION=BackFS v0.2\
 $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai" -n1)\

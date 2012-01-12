@@ -24,6 +24,7 @@
 #include "global.h"
 
 extern int backfs_log_level;
+extern int backfs_log_stderr;
 
 char * fsll_getlink(const char *base, const char *file)
 {
@@ -238,7 +239,7 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     if (n) free(n);
     if (p) free(p);
 
-    fsll_dump(base, head, tail);
+    //fsll_dump(base, head, tail);
 }
 
 void fsll_insert_as_head(const char *base, const char *path, const char *head,
@@ -260,10 +261,12 @@ void fsll_insert_as_head(const char *base, const char *path, const char *head,
         fsll_makelink(h, "prev", path);
         fsll_makelink(base, head, path);
     } else {
-        if (h)
+        if (h) {
             ERROR("list has a head but no tail!\n");
-        if (t)
+        }
+        if (t) {
             ERROR("list has a tail but no head!\n");
+        }
     }
 
     if (h) free(h);
