@@ -80,7 +80,7 @@ Requirements
 * [FUSE](http://fuse.sourceforge.net/) version 2.8 or greater.
 * An operating system that FUSE supports. 
  
-Linux 2.6 is the only operating system I've tested, but others might work; nothing in the implementation is particularly tied to Linux versus other UNIXes.
+Linux 2.6 and 3.x are the only operating systems I've tested, but others might work; nothing in the implementation is particularly tied to Linux versus other UNIXes.
 
 Installation
 ------------
