@@ -17,6 +17,9 @@ If the data in the backing store is updated, when someone requests that data Bac
 
 #### !! BackFS is experimental code and should not be used on production systems !! ####
 
+BackFS has been found to be reliable in normal usage scenarios, but is not coded to be 100% fault tolerant.
+Unexpected errors could cause data corruption! Caveat emptor.
+
 Usage
 -----
      backfs -o cache=<cache storage> <slow backing store> <mount point>
@@ -123,9 +126,13 @@ The head of the used queue is the bucket which was most recently accessed for re
 The tail is the least recently accessed, and the next candidate for deletion.
 When a bucket is accessed, it is promoted to the head of the used queue by snipping it out, joining its neighbors, and inserting it as the head.
 
-When buckets are freed, to make room for more data in the cache, several things happen in sequence:
+If, when adding data to the cache, the cache either hits its configured storage limit or the device runs out of space,
+BackFS will go through the used queue (starting at the tail -- the least recently accessed bucket)
+and free buckets to make space for new data, until enough space has been made.
 
-- their `data` file is deleted
+When a bucket is freed, several things happen in sequence:
+
+- its `data` file is deleted
 - the `parent` symlink is followed, the map file it pointed to is deleted
 - the `parent` symlink itself is deleted
 - the bucket is removed from the tail used queue
