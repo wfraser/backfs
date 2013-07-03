@@ -57,7 +57,6 @@ int backfs_log_level;
 bool backfs_log_stderr = false;
 
 static struct backfs backfs;
-#define BACKFS_OPT(t,p,v) { t, offsetof(struct 
 static struct fuse_opt backfs_opts[] = {
     {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
