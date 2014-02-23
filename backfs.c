@@ -26,6 +26,7 @@
 
 #include "global.h"
 #include "fscache.h"
+#include "util.h"
 
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
@@ -428,7 +429,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     }
 
     int res;
-    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + pathconf(real, _PC_NAME_MAX) + 1);
+    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + max_filename_length(real) + 1);
     struct dirent *rp;
     while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
         filler(buf, rp->d_name, NULL, 0);
