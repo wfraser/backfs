@@ -34,8 +34,8 @@ Let's say we can spare 20 gigs. Make a filesystem to hold the cache:
       0+0 records in
       0+0 records out
       0 bytes (0 B) copied, 1.4545e-05 s, 0.0 kB/s
-    $ mkfs.ext2 -m 0 /var/cache/backfs.img
-      mke2fs 1.41.14 (22-Dec-2010)
+    $ mkfs.ext4 -m 0 /var/cache/backfs.img
+      mke2fs 1.42.5 (29-Jul-2012)
       /var/cache/backfs.img is not a block special device.
       Proceed anyway? (y,n) y
       ... snip
