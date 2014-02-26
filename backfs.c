@@ -4,7 +4,6 @@
  */
 
 // this needs to be first
-#define _GNU_SOURCE
 #include <fuse.h>
 #include <fuse_opt.h>
 

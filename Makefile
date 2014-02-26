@@ -4,8 +4,8 @@ VERSION=BackFS v0.3\
 $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai" -n1)\
 \nbuilt $(shell date "+%Y-%m-%d %H:%M:%S %z")\n
 
-DEFINES=-D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -D_POSIX_C_SOURCE=201201 -DBACKFS_VERSION="\"$(VERSION)\""
-CFLAGS=-std=c1x -pedantic -g3 $(DEFINES) -I/usr/include/fuse -gstabs
+DEFINES=-D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=28 -D_POSIX_C_SOURCE=201201 -D_GNU_SOURCE -DBACKFS_VERSION="\"$(VERSION)\""
+CFLAGS=-std=c1x -pedantic -Werror -gstabs3 $(DEFINES) -I/usr/include/fuse
 LDFLAGS=-lfuse
 
 CC = gcc

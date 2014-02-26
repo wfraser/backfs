@@ -22,40 +22,43 @@
 
 #define BACKFS_LOG_SUBSYS "FSLL"
 #include "global.h"
+#include "util.h"
 
 extern int backfs_log_level;
 extern int backfs_log_stderr;
 
-char * fsll_getlink(const char *base, const char *file)
+char* fsll_getlink(const char *base, const char *file)
 {
-    char path[PATH_MAX];
-    char *result = (char*)malloc(PATH_MAX);
-    snprintf(path, PATH_MAX, "%s/%s", base, file);
-    ssize_t len;
-    if ((len = readlink(path, result, PATH_MAX-1)) == -1) {
-        if (errno == ENOENT || errno == ENOTDIR) {
-            free(result);
-            return NULL;
-        } else {
-            PERROR("readlink in fsll_getlink");
-            free(result);
+    char *path = NULL;
+    asprintf(&path, "%s/%s", base, file);
+    char *result = areadlink(path);
+    if (result == NULL) {
+        if ((errno == ENOENT) || (errno == ENOTDIR)) {
+            free(path);
             return NULL;
         }
-    } else {
-        result[len] = '\0';
+        else {
+            PERROR("readlink in fsll_getlink");
+            free(path);
+            return NULL;
+        }
+    }
+    else {
+        free(path);
         return result;
     }
 }
 
 void fsll_makelink(const char *base, const char *file, const char *dest)
 {
-    char source[PATH_MAX];
-    snprintf(source, PATH_MAX, "%s/%s", base, file);
+    char *source = NULL;
+    asprintf(&source, "%s/%s", base, file);
 
     if (unlink(source) == -1) {
         if (errno != ENOENT && errno != ENOTDIR) {
             PERROR("unlink in fsll_makelink");
             ERROR("caused by unlink(%s)\n", source);
+            free(source);
             return;
         }
     }
@@ -66,23 +69,28 @@ void fsll_makelink(const char *base, const char *file, const char *dest)
             ERROR("caused by symlink(%s,%s)\n", dest, source);
         }
     }
+
+    free(source);
 }
 
 bool fsll_file_exists(const char *base, const char *file)
 {
-    char path[PATH_MAX];
+    const char *target = base;
+    char *path = NULL;
+
     if (file != NULL) {
-        snprintf(path, PATH_MAX, "%s/%s", base, file);
-        base = path;
+        asprintf(&path, "%s/%s", base, file);
+        target = path;
     }
 
-    if (access(base, F_OK) == -1) {
-        return false;
-    } else {
-        return true;
-    }
+    bool result = (access(target, F_OK) == 0);
+    free(path);
+    return result;
 }
 
+/*
+ * This is used for fsll_dump only. It's not very robust.
+ */
 char fsll_base_buf[PATH_MAX];
 const char * fsll_basename(const char *path)
 {
@@ -143,13 +151,11 @@ void fsll_dump(const char *base, const char *headfile, const char *tailfile)
  */
 char * fsll_make_entry(const char *base, const char *dir, uint64_t number)
 {
-    char *path = (char*)malloc(PATH_MAX);
+    char *path = NULL;
     if (dir != NULL) {
-        snprintf(path, PATH_MAX, "%s/%s/%llu",
-                base, dir, (unsigned long long) number);
+        asprintf(&path, "%s/%s/%llu", base, dir, (unsigned long long)number);
     } else {
-        snprintf(path, PATH_MAX, "%s/%llu", 
-                base, (unsigned long long) number);
+        asprintf(&path, "%s/%llu", base, (unsigned long long)number);
     }
 
     if (mkdir(path, 0700) == -1) {
