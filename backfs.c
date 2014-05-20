@@ -190,6 +190,20 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
     return -EIO;
 }
 
+int backfs_readlink(const char *path, char *buf, size_t bufsize)
+{
+    char real[PATH_MAX];
+    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+
+    ssize_t bytes_written = readlink(real, buf, bufsize);
+    if (bytes_written == -1)
+    {
+        return -errno;
+    }
+
+    return 0;
+}
+
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
     DEBUG("BackFS: getattr %s\n", path);
@@ -455,7 +469,8 @@ static struct fuse_operations BackFS_Opers = {
     .readdir    = backfs_readdir,
     .getattr    = backfs_getattr,
     .access     = backfs_access,
-    .write      = backfs_write
+    .write      = backfs_write,
+    .readlink   = backfs_readlink
 };
 
 int backfs_opt_proc(void *data, const char *arg, int key, 
