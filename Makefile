@@ -7,6 +7,7 @@ $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai
 DEFINES=-D_FILE_OFFSET_BITS=64 \
 	-DFUSE_USE_VERSION=28 \
 	-D_POSIX_C_SOURCE=201201 \
+	-D_GNU_SOURCE \
 	-DBACKFS_VERSION="\"$(VERSION)\"" \
 	-DBACKFS_RW
 
