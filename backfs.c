@@ -4,7 +4,6 @@
  */
 
 // this needs to be first
-#define _GNU_SOURCE
 #include <fuse.h>
 #include <fuse_opt.h>
 
@@ -26,6 +25,7 @@
 
 #include "global.h"
 #include "fscache.h"
+#include "util.h"
 
 #if FUSE_USE_VERSION > 25
 #define backfs_fuse_main(argc, argv, opers) fuse_main(argc,argv,opers,NULL)
@@ -188,6 +188,20 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
     //TODO
     return -EIO;
+}
+
+int backfs_readlink(const char *path, char *buf, size_t bufsize)
+{
+    char real[PATH_MAX];
+    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+
+    ssize_t bytes_written = readlink(real, buf, bufsize);
+    if (bytes_written == -1)
+    {
+        return -errno;
+    }
+
+    return 0;
 }
 
 int backfs_getattr(const char *path, struct stat *stbuf)
@@ -427,7 +441,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     }
 
     int res;
-    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + pathconf(real, _PC_NAME_MAX) + 1);
+    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + max_filename_length(real) + 1);
     struct dirent *rp;
     while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
         filler(buf, rp->d_name, NULL, 0);
@@ -455,7 +469,8 @@ static struct fuse_operations BackFS_Opers = {
     .readdir    = backfs_readdir,
     .getattr    = backfs_getattr,
     .access     = backfs_access,
-    .write      = backfs_write
+    .write      = backfs_write,
+    .readlink   = backfs_readlink
 };
 
 int backfs_opt_proc(void *data, const char *arg, int key, 

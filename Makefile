@@ -15,7 +15,7 @@ LDFLAGS=-lfuse
 
 CC = gcc
 
-OBJS = backfs.o fscache.o fsll.o
+OBJS = backfs.o fscache.o fsll.o util.o
 
 all: backfs
 
