@@ -44,15 +44,7 @@ struct backfs {
     bool rw;
     pthread_mutex_t lock;
 };
-static struct backfs backfs;
-
-enum {
-    KEY_RW,
-    KEY_VERBOSE,
-    KEY_DEBUG,
-    KEY_HELP,
-    KEY_VERSION,
-};
+static struct backfs backfs = {0};
 
 int backfs_log_level;
 bool backfs_log_stderr = false;
@@ -64,7 +56,8 @@ void usage()
         "\n"
         "BackFS options:\n"
         "    -o cache               cache location (REQUIRED)\n"
-        "    -o backing_fs          backing filesystem location (REQUIRED)\n"
+        "    -o backing_fs          backing filesystem location (REQUIRED here or\n"
+        "                               as the first non-option argument)\n"
         "    -o cache_size          maximum size for the cache (0)\n"
         "                           (default is for cache to grow to fill the device\n"
         "                              it is on)\n"
@@ -452,14 +445,20 @@ static struct fuse_operations BackFS_Opers = {
     .readlink   = backfs_readlink
 };
 
+enum {
+    KEY_RW,
+    KEY_VERBOSE,
+    KEY_DEBUG,
+    KEY_HELP,
+    KEY_VERSION,
+};
+
 static struct fuse_opt backfs_opts[] = {
     {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
     {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
     {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
     {"block_size=%llu", offsetof(struct backfs, block_size),    0},
-#ifdef BACKFS_RW
     FUSE_OPT_KEY("rw",          KEY_RW),
-#endif
     FUSE_OPT_KEY("verbose",     KEY_VERBOSE),
     FUSE_OPT_KEY("-v",          KEY_VERBOSE),
     FUSE_OPT_KEY("--verbose",   KEY_VERBOSE),
@@ -480,35 +479,46 @@ enum {
 };
 
 int num_nonopt_args_read = 0;
+char* nonopt_arguments[2] = {NULL, NULL};
 
 int backfs_opt_proc(void *data, const char *arg, int key, 
         struct fuse_args *outargs)
 {
     switch (key) {
     case FUSE_OPT_KEY_OPT:
-        printf("FUSE_OPT_KEY_OPT: %s\n", arg);
+        // Unknown option-argument. Pass it along to FUSE I guess?
         return FUSE_OPT_KEEP;
 
     case FUSE_OPT_KEY_NONOPT:
-        printf("FUSE_OPT_KEY_NONOPT: %d: %s\n", num_nonopt_args_read, arg);
-        switch (num_nonopt_args_read++) {
-        case 0:
-            backfs.real_root = (char*)arg;
+        // We take either 1 or 2 non-option arguments.
+        // The last one is the mount-point. This needs to be tacked on to the outargs,
+        // because FUSE handles it. But during parsing we don't know how many there are,
+        // so just save them for later, and main() will fix it.
+        if (num_nonopt_args_read < 2) {
+            nonopt_arguments[num_nonopt_args_read++] = (char*)arg;
             return FUSE_OPT_DISCARD;
-        case 1:
-            // mount point
-            return FUSE_OPT_KEEP;
-        default:
+        }
+        else {
             fprintf(stderr, "BackFS: too many arguments: "
                 "don't know what to do with \"%s\"\n", arg);
             return FUSE_OPT_ERROR;
-            return 1;
         }
         break;
 
     case KEY_RW:
+#ifdef BACKFS_RW
+        // Print a nasty warning to stdout
+        printf("####################################\n"
+               "#                                  #\n"
+               "# ENABLING EXPERIMENTAL R/W MODE!! #\n"
+               "#                                  #\n"
+               "####################################\n");
         backfs.rw = true;
         return FUSE_OPT_DISCARD;
+#else
+        fprintf(stderr, "BackFS: mounting r/w is not supported in this build.\n");
+        return FUSE_OPT_ERROR;
+#endif
 
     case KEY_VERBOSE:
         backfs_log_level = LOG_LEVEL_INFO;
@@ -547,25 +557,31 @@ int main(int argc, char **argv)
     backfs_log_level = LOG_LEVEL_WARN;
 
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
-        fprintf(stderr, "BackFS: fuse_opt_parse failed\n");
+        fprintf(stderr, "BackFS: argument parsing failed.\n");
         return 1;
+    }
+
+    printf("%d read\n", num_nonopt_args_read);
+    fuse_opt_add_arg(&args, nonopt_arguments[num_nonopt_args_read - 1]);
+    if (num_nonopt_args_read == 2) {
+        backfs.real_root = nonopt_arguments[0];
     }
 
     char cwd[PATH_MAX];
     getcwd(cwd, PATH_MAX);
 
     if (backfs.real_root == NULL) {
-        if (args.argc < 2 || (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
+//        if (args.argc < 2 || (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
             fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
             usage();
             fuse_opt_add_arg(&args, "-ho");
             backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
             return -1;
-        } else {
-            backfs.real_root = args.argv[ args.argc - 2 ];
-            args.argv[ args.argc - 2 ] = args.argv[ args.argc - 1 ];
-            args.argc--;
-        }
+//        } else {
+//            backfs.real_root = args.argv[ args.argc - 2 ];
+//            args.argv[ args.argc - 2 ] = args.argv[ args.argc - 1 ];
+//            args.argc--;
+//        }
     }
 
     if (backfs.real_root[0] != '/') {
@@ -578,6 +594,7 @@ int main(int argc, char **argv)
     DIR *d;
     if ((d = opendir(backfs.real_root)) == NULL) {
         perror("BackFS ERROR: error checking backing filesystem");
+        fprintf(stderr, "BackFS: specified as \"%s\"\n", backfs.real_root);
         return 2;
     }
     closedir(d);
