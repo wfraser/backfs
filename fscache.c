@@ -1,6 +1,6 @@
 /*
  * BackFS Filesystem Cache
- * Copyright (c) 2010-2011 William R. Fraser
+ * Copyright (c) 2010-2014 William R. Fraser
  */
 
 #define _XOPEN_SOURCE 500 // for pread()

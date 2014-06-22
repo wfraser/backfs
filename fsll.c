@@ -1,6 +1,6 @@
 /*
  * Filesystem Linked List
- * Copyright (c) 2010-2011 William R. Fraser
+ * Copyright (c) 2010-2014 William R. Fraser
  */
 #include "fsll.h"
 
