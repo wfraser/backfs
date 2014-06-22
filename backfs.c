@@ -44,6 +44,7 @@ struct backfs {
     bool rw;
     pthread_mutex_t lock;
 };
+static struct backfs backfs;
 
 enum {
     KEY_RW,
@@ -55,28 +56,6 @@ enum {
 
 int backfs_log_level;
 bool backfs_log_stderr = false;
-
-static struct backfs backfs;
-static struct fuse_opt backfs_opts[] = {
-    {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
-    {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
-    {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
-    {"block_size=%llu", offsetof(struct backfs, block_size),    0},
-#ifdef BACKFS_RW
-    FUSE_OPT_KEY("rw",          KEY_RW),
-#endif
-    FUSE_OPT_KEY("verbose",     KEY_VERBOSE),
-    FUSE_OPT_KEY("-v",          KEY_VERBOSE),
-    FUSE_OPT_KEY("--verbose",   KEY_VERBOSE),
-    FUSE_OPT_KEY("debug",       KEY_DEBUG),
-    FUSE_OPT_KEY("-d",          KEY_DEBUG),
-    FUSE_OPT_KEY("--debug",     KEY_DEBUG),
-    FUSE_OPT_KEY("-h",          KEY_HELP),
-    FUSE_OPT_KEY("--help",      KEY_HELP),
-    FUSE_OPT_KEY("-V",          KEY_VERSION),
-    FUSE_OPT_KEY("--version",   KEY_VERSION),
-    FUSE_OPT_END
-};
 
 void usage()
 {
@@ -473,28 +452,73 @@ static struct fuse_operations BackFS_Opers = {
     .readlink   = backfs_readlink
 };
 
+static struct fuse_opt backfs_opts[] = {
+    {"cache=%s",        offsetof(struct backfs, cache_dir),     0},
+    {"cache_size=%llu", offsetof(struct backfs, cache_size),    0},
+    {"backing_fs=%s",   offsetof(struct backfs, real_root),     0},
+    {"block_size=%llu", offsetof(struct backfs, block_size),    0},
+#ifdef BACKFS_RW
+    FUSE_OPT_KEY("rw",          KEY_RW),
+#endif
+    FUSE_OPT_KEY("verbose",     KEY_VERBOSE),
+    FUSE_OPT_KEY("-v",          KEY_VERBOSE),
+    FUSE_OPT_KEY("--verbose",   KEY_VERBOSE),
+    FUSE_OPT_KEY("debug",       KEY_DEBUG),
+    FUSE_OPT_KEY("-d",          KEY_DEBUG),
+    FUSE_OPT_KEY("--debug",     KEY_DEBUG),
+    FUSE_OPT_KEY("-h",          KEY_HELP),
+    FUSE_OPT_KEY("--help",      KEY_HELP),
+    FUSE_OPT_KEY("-V",          KEY_VERSION),
+    FUSE_OPT_KEY("--version",   KEY_VERSION),
+    FUSE_OPT_END
+};
+
+enum {
+    FUSE_OPT_ERROR = -1,
+    FUSE_OPT_DISCARD = 0,
+    FUSE_OPT_KEEP = 1
+};
+
+int num_nonopt_args_read = 0;
+
 int backfs_opt_proc(void *data, const char *arg, int key, 
         struct fuse_args *outargs)
 {
     switch (key) {
     case FUSE_OPT_KEY_OPT:
-        return 1;
+        printf("FUSE_OPT_KEY_OPT: %s\n", arg);
+        return FUSE_OPT_KEEP;
 
     case FUSE_OPT_KEY_NONOPT:
-        return 1;
+        printf("FUSE_OPT_KEY_NONOPT: %d: %s\n", num_nonopt_args_read, arg);
+        switch (num_nonopt_args_read++) {
+        case 0:
+            backfs.real_root = (char*)arg;
+            return FUSE_OPT_DISCARD;
+        case 1:
+            // mount point
+            return FUSE_OPT_KEEP;
+        default:
+            fprintf(stderr, "BackFS: too many arguments: "
+                "don't know what to do with \"%s\"\n", arg);
+            return FUSE_OPT_ERROR;
+            return 1;
+        }
+        break;
 
     case KEY_RW:
         backfs.rw = true;
+        return FUSE_OPT_DISCARD;
 
     case KEY_VERBOSE:
         backfs_log_level = LOG_LEVEL_INFO;
-        return 1;
+        return FUSE_OPT_DISCARD;
 
     case KEY_DEBUG:
         fuse_opt_add_arg(outargs, "-d");
         backfs_log_level = LOG_LEVEL_DEBUG;
         backfs_log_stderr = true;
-        return 1;
+        return FUSE_OPT_DISCARD;
     
     case KEY_HELP:
         fuse_opt_add_arg(outargs, "-h");
@@ -509,6 +533,7 @@ int backfs_opt_proc(void *data, const char *arg, int key,
         exit(0);
         
     default:
+        // Shouldn't ever get here.
         fprintf(stderr, "BackFS: argument parsing error\n");
         abort();
     }
@@ -544,7 +569,7 @@ int main(int argc, char **argv)
     }
 
     if (backfs.real_root[0] != '/') {
-        char *rel = backfs.real_root;
+        const char *rel = backfs.real_root;
 
         backfs.real_root = (char*)malloc(strlen(cwd)+strlen(rel)+2);
         sprintf(backfs.real_root, "%s/%s", cwd, rel);
