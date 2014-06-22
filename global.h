@@ -1,10 +1,6 @@
 #ifndef WRF_BACKFS_GLOBAL_H
 #define WRF_BACKFS_GLOBAL_H
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 #ifndef BACKFS_LOG_SUBSYS
 #define _BACKFS_LOG_SUBSYS /* empty */
 #define BACKFS_LOG_SUBSYS_ /* empty */
