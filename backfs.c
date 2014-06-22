@@ -605,17 +605,11 @@ int main(int argc, char **argv)
 #endif
 
     if (backfs.real_root == NULL) {
-//        if (args.argc < 2 || (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
-            fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
-            usage();
-            fuse_opt_add_arg(&args, "-ho");
-            backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
-            return -1;
-//        } else {
-//            backfs.real_root = args.argv[ args.argc - 2 ];
-//            args.argv[ args.argc - 2 ] = args.argv[ args.argc - 1 ];
-//            args.argc--;
-//        }
+        fprintf(stderr, "BackFS: error: you need to specify a backing filesystem.\n");
+        usage();
+        fuse_opt_add_arg(&args, "-ho");
+        backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+        return -1;
     }
 
     if (backfs.real_root[0] != '/') {
