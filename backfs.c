@@ -73,6 +73,9 @@ void usage()
     );
 }
 
+const char BACKFS_CONTROL_FILE[] = "/.backfs_control";
+const char BACKFS_VERSION_FILE[] = "/.backfs_version";
+
 int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
         struct fuse_file_info *fi)
 {
@@ -118,14 +121,14 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
 {
     DEBUG("BackFS: open %s\n", path);
 
-    if (strcmp("/.backfs_control", path) == 0) {
+    if (strcmp(BACKFS_CONTROL_FILE, path) == 0) {
         if ((fi->flags & 3) != O_WRONLY)
             return -EACCES;
         else
             return 0;
     }
 
-    if (strcmp("/.backfs_version", path) == 0) {
+    if (strcmp(BACKFS_VERSION_FILE, path) == 0) {
         if ((fi->flags & 3) != O_RDONLY)
             return -EACCES;
         else
@@ -150,7 +153,7 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
 int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
         struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/.backfs_control") == 0) {
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
         return backfs_control_file_write(path, buf, len, offset, fi);
     }
 
@@ -180,7 +183,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
 {
     DEBUG("BackFS: getattr %s\n", path);
 
-    if (strcmp(path, "/.backfs_control") == 0) {
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFREG | 0200;
         stbuf->st_nlink = 1;
@@ -193,7 +196,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         return 0;
     }
 
-    if (strcmp(path, "/.backfs_version") == 0) {
+    if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFREG | 0444;
         stbuf->st_nlink = 1;
@@ -224,7 +227,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/.backfs_version") == 0) {
+    if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         char *ver = BACKFS_VERSION;
         size_t len = strlen(ver);
 
@@ -434,15 +437,102 @@ int backfs_access(const char *path, int mode)
     return 0;
 }
 
+int backfs_truncate(const char *path, off_t offset)
+{
+    DEBUG("truncate %s, %u\n", path, offset);
+
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
+        // Probably due to user doing 'echo foo > .backfs_control' instead of using '>>'.
+        // Ignore it.
+        return 0;
+    }
+
+    return -EACCES;
+}
+
+#define STUB_(func) \
+int backfs_##func(const char *path) \
+{ \
+    DEBUG(#func ": %s\n", path); \
+    return -ENOSYS; \
+}
+
+#define STUB(func, ...) \
+int backfs_##func(const char *path, __VA_ARGS__) \
+{ \
+    DEBUG(#func ": %s\n", path); \
+    return -ENOSYS; \
+}
+
+STUB(mkdir, mode_t mode)
+STUB_(unlink)
+STUB_(rmdir)
+STUB(symlink, const char *other)
+STUB(rename, const char *path_new)
+STUB(link, const char *other)
+STUB(chmod, mode_t mode)
+STUB(chown, uid_t uid, gid_t gid)
+STUB(statfs, struct statvfs *stat)
+STUB(flush, struct fuse_file_info *ffi)
+STUB(fsync, int n, struct fuse_file_info *ffi)
+STUB(setxattr, const char *a, const char *b, size_t c, int d)
+STUB(getxattr, const char *a, char *b, size_t c)
+STUB(listxattr, char *a, size_t b)
+STUB(removexattr, const char *a)
+STUB(fsyncdir, int a, struct fuse_file_info *ffi)
+STUB(create, mode_t mode, struct fuse_file_info *ffi)
+STUB(lock, struct fuse_file_info *ffi, int cmd, struct flock *flock)
+STUB(utimens, const struct timespec tv[2])
+STUB(bmap, size_t blocksize, uint64_t *idx)
+STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, void *data)
+STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
+STUB(flock, struct fuse_file_info *ffi, int op)
+STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+
+#define IMPL(func) .func = backfs_##func
+
 static struct fuse_operations BackFS_Opers = {
-    .open       = backfs_open,
-    .read       = backfs_read,
-    .opendir    = backfs_opendir,
-    .readdir    = backfs_readdir,
-    .getattr    = backfs_getattr,
-    .access     = backfs_access,
-    .write      = backfs_write,
-    .readlink   = backfs_readlink
+#ifdef BACKFS_RW
+    IMPL(mkdir),
+    IMPL(unlink),
+    IMPL(rmdir),
+    IMPL(symlink),
+    IMPL(rename),
+    IMPL(link),
+    IMPL(chmod),
+    IMPL(chown),
+    IMPL(statfs),
+    IMPL(flush),
+    IMPL(fsync),
+    IMPL(setxattr),
+    IMPL(getxattr),
+    IMPL(listxattr),
+    IMPL(removexattr),
+    IMPL(fsyncdir),
+    IMPL(create),
+    IMPL(lock),
+    IMPL(utimens),
+    IMPL(bmap),
+    IMPL(ioctl),
+    IMPL(poll),
+    IMPL(flock),
+    IMPL(fallocate),
+#endif
+    IMPL(open),
+    IMPL(read),
+    IMPL(opendir),
+    IMPL(readdir),
+    IMPL(getattr),
+    IMPL(access),
+    IMPL(write),
+    IMPL(readlink),
+    IMPL(truncate),
+//  IMPL(release),      // not needed
+//  IMPL(releasedir),   // not needed
+//  IMPL(ftruncate)     // redundant, use truncate instead
+//  IMPL(fgetattr),     // redundant, use getattr instead
+//  IMPL(read_buf),     // use read instead
+//  IMPL(write_buf),    // use write instead
 };
 
 enum {
