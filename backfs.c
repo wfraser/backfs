@@ -81,7 +81,8 @@ const char BACKFS_VERSION_FILE[] = "/.backfs_version";
 #define REALPATH(real, path) \
     do { \
         if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
-            return -EIO; \
+            ret = -ENOMEM; \
+            goto exit; \
         } \
     } while (0)
 
@@ -129,35 +130,38 @@ int backfs_control_file_write(const char *path, const char *buf, size_t len, off
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
     DEBUG("BackFS: open %s\n", path);
+    int ret = 0;
+    char *real = NULL;
 
     if (strcmp(BACKFS_CONTROL_FILE, path) == 0) {
         if ((fi->flags & 3) != O_WRONLY)
-            return -EACCES;
-        else
-            return 0;
+            ret = -EACCES;
+        goto exit;
     }
 
     if (strcmp(BACKFS_VERSION_FILE, path) == 0) {
         if ((fi->flags & 3) != O_RDONLY)
-            return -EACCES;
-        else
-            return 0;
+            ret = -EACCES;
+        goto exit;
     }
 
-    char *real = NULL;
     REALPATH(real, path);
     struct stat stbuf;
-    int ret = lstat(real, &stbuf);
+    ret = lstat(real, &stbuf);
     FREE(real);
     if (ret == -1) {
-        return -errno;
+        ret = -errno;
+        goto exit;
     }
 
     if (!backfs.rw && (fi->flags & 3) != O_RDONLY) {
-        return -EACCES;
+        ret = -EACCES;
+        goto exit;
     }
 
-    return 0;
+exit:
+    FREE(real);
+    return ret;
 }
 
 int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
@@ -177,22 +181,28 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
 int backfs_readlink(const char *path, char *buf, size_t bufsize)
 {
+    int ret = 0;
     char *real = NULL;
+
     REALPATH(real, path);
 
     ssize_t bytes_written = readlink(real, buf, bufsize);
-    FREE(real);
     if (bytes_written == -1)
     {
-        return -errno;
+        ret = -errno;
+        goto exit;
     }
 
-    return 0;
+exit:
+    FREE(real);
+    return ret;
 }
 
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
     DEBUG("BackFS: getattr %s\n", path);
+    int ret = 0;
+    char *real = NULL;
 
     if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -204,7 +214,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         stbuf->st_atime = 0;
         stbuf->st_mtime = 0;
         stbuf->st_ctime = 0;
-        return 0;
+        goto exit;
     }
 
     if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
@@ -217,23 +227,25 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         stbuf->st_atime = 0;
         stbuf->st_mtime = 0;
         stbuf->st_ctime = 0;
-        return 0;
+        goto exit;
     }
 
-    char *real = NULL;
     REALPATH(real, path);
-    int ret = lstat(real, stbuf);
-    FREE(real);
+    ret = lstat(real, stbuf);
     
     // no write or exec perms
     stbuf->st_mode &= ~0333;
 
     if (ret == -1) {
-        return -errno;
+        ret = -errno;
     } else {
         DEBUG("BackFS: mode: %o\n", stbuf->st_mode);
-        return 0;
+        ret = 0;
     }
+
+exit:
+    FREE(real);
+    return ret;
 }
 
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
@@ -402,36 +414,40 @@ exit:
 int backfs_opendir(const char *path, struct fuse_file_info *fi)
 {
     DEBUG("opendir %s\n", path);
-
+    int ret = 0;
     char *real = NULL;
     REALPATH(real, path);
 
     DIR *dir = opendir(real);
-    FREE(real);
 
     if (dir == NULL) {
         PERROR("opendir failed");
-        return -errno;
+        ret = -errno;
+        goto exit;
     }
 
     fi->fh = (uint64_t)(long)dir;
 
-    return 0;
+exit:
+    FREE(real);
+    return ret;
 }
 
 int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
     DEBUG("readdir %s\n", path);
+    int ret = 0;
+    char *real = NULL;
 
     DIR *dir = (DIR*)(long)(fi->fh);
 
     if (dir == NULL) {
         ERROR("got null dir handle");
-        return -EBADF;
+        ret = -EBADF;
+        goto exit;
     }
 
-    char *real = NULL;
     REALPATH(real, path);
 
     // fs control handle
@@ -442,9 +458,9 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int res;
     struct dirent *entry = malloc(offsetof(struct dirent, d_name) + max_filename_length(real) + 1);
-    FREE(real);
     if (entry == NULL) {
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto exit;
     }
     struct dirent *rp;
     while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
@@ -454,6 +470,8 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     closedir(dir);
 
+exit:
+    FREE(real);
     return 0;
 }
 
