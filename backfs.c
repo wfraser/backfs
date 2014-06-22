@@ -49,6 +49,8 @@ static struct backfs backfs = {0};
 int backfs_log_level;
 bool backfs_log_stderr = false;
 
+#define FREE(var) { free(var); var = NULL; }
+
 void usage()
 {
     fprintf(stderr, 
@@ -75,6 +77,13 @@ void usage()
 
 const char BACKFS_CONTROL_FILE[] = "/.backfs_control";
 const char BACKFS_VERSION_FILE[] = "/.backfs_version";
+
+#define REALPATH(real, path) \
+    do { \
+        if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
+            return -EIO; \
+        } \
+    } while (0)
 
 int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
         struct fuse_file_info *fi)
@@ -135,10 +144,11 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
             return 0;
     }
 
-    char real[PATH_MAX];
-    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    char *real = NULL;
+    REALPATH(real, path);
     struct stat stbuf;
     int ret = lstat(real, &stbuf);
+    FREE(real);
     if (ret == -1) {
         return -errno;
     }
@@ -167,10 +177,11 @@ int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
 
 int backfs_readlink(const char *path, char *buf, size_t bufsize)
 {
-    char real[PATH_MAX];
-    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    char *real = NULL;
+    REALPATH(real, path);
 
     ssize_t bytes_written = readlink(real, buf, bufsize);
+    FREE(real);
     if (bytes_written == -1)
     {
         return -errno;
@@ -209,9 +220,10 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         return 0;
     }
 
-    char real[PATH_MAX];
-    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    char *real = NULL;
+    REALPATH(real, path);
     int ret = lstat(real, stbuf);
+    FREE(real);
     
     // no write or exec perms
     stbuf->st_mode &= ~0333;
@@ -227,19 +239,25 @@ int backfs_getattr(const char *path, struct stat *stbuf)
 int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
+    int ret = 0;
+    bool locked = false;
+    char *block_buf = NULL;
+    char *real = NULL;
+
     if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         char *ver = BACKFS_VERSION;
         size_t len = strlen(ver);
 
         if (offset > len) {
-            return 0;
+            goto exit;
         }
 
         int bytes_out = ((len - offset) > size) ? size : (len - offset);
 
         memcpy(rbuf, ver+offset, bytes_out);
 
-        return bytes_out;
+        ret = bytes_out;
+        goto exit;
     }
 
     // for debug output
@@ -272,6 +290,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
         // in case another thread is reading a full block as a result of a 
         // cache miss
         pthread_mutex_lock(&backfs.lock);
+        locked = true;
 
         if (first) {
             DEBUG("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
@@ -286,14 +305,14 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 (unsigned long) block_offset,
                 (unsigned long) block_offset + block_size);
                 
-        char real[PATH_MAX];
-        snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+        REALPATH(real, path);
         
         struct stat real_stat;
         real_stat.st_mtime = 0;
         if (stat(real, &real_stat) == -1) {
             PERROR("stat on real file failed");
-            return -1 * errno;
+            ret = -1 * errno;
+            goto exit;
         }
 
         uint64_t bread = 0;
@@ -304,8 +323,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 // not an error
             } else {
                 PERROR("read from cache failed");
-                pthread_mutex_unlock(&backfs.lock);
-                return -EIO;
+                ret = -EIO;
+                goto exit;
             }
 
             //
@@ -317,31 +336,27 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             int fd = open(real, O_RDONLY);
             if (fd == -1) {
                 PERROR("error opening real file");
-                pthread_mutex_unlock(&backfs.lock);
-                return -EIO;
+                ret = -EIO;
+                goto exit;
             }
             
             // read the entire block
-            char *block_buf = (char*)malloc(backfs.block_size);
+            block_buf = (char*)malloc(backfs.block_size);
             int nread = pread(fd, block_buf, backfs.block_size,
                     backfs.block_size * block);
             if (nread == -1) {
                 PERROR("read error on real file");
                 close(fd);
-                pthread_mutex_unlock(&backfs.lock);
-                return -EIO;
+                ret = -EIO;
+                goto exit;
             } else {
                 close(fd);
                 DEBUG("got %lu bytes from real file\n", (unsigned long) nread);
                 DEBUG("adding to cache\n");
                 cache_add(path, block, block_buf, nread, real_stat.st_mtime);
 
-                pthread_mutex_unlock(&backfs.lock);
-
                 memcpy(rbuf+buf_offset, block_buf+block_offset, 
                         ((nread < block_size) ? nread : block_size));
-
-                free(block_buf);
 
                 if (nread < block_size) {
                     DEBUG("read less than requested, %lu instead of %lu\n", 
@@ -349,7 +364,8 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                     bytes_read += nread;
                     DEBUG("bytes_read=%lu\n", 
                             (unsigned long) bytes_read);
-                    return bytes_read;
+                    ret = bytes_read;
+                    goto exit;
                 } else {
                     DEBUG("%lu bytes for fuse buffer\n", 
                             (unsigned long) block_size);
@@ -358,7 +374,6 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 }
             }
         } else {
-            pthread_mutex_unlock(&backfs.lock);
             DEBUG("got %lu bytes from cache\n", (unsigned long) bread);
             bytes_read += bread;
             DEBUG("bytes_read=%lu\n", (unsigned long) bytes_read);
@@ -366,23 +381,33 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             if (bread < block_size) {
                 // must have read the end of file
                 DEBUG("fewer than requested\n");
-                return bytes_read;
+                ret = bytes_read;
+                goto exit;
             }
         }
         buf_offset += block_size;
     }
 
-    return bytes_read;
+    ret = bytes_read;
+
+exit:
+    if (locked) {
+        pthread_mutex_unlock(&backfs.lock);
+    }
+    FREE(real);
+    FREE(block_buf);
+    return ret;
 }
 
 int backfs_opendir(const char *path, struct fuse_file_info *fi)
 {
     DEBUG("opendir %s\n", path);
 
-    char real[PATH_MAX];
-    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    char *real = NULL;
+    REALPATH(real, path);
 
     DIR *dir = opendir(real);
+    FREE(real);
 
     if (dir == NULL) {
         PERROR("opendir failed");
@@ -406,8 +431,8 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         return -EBADF;
     }
 
-    char real[PATH_MAX];
-    snprintf(real, PATH_MAX, "%s%s", backfs.real_root, path);
+    char *real = NULL;
+    REALPATH(real, path);
 
     // fs control handle
     if (strcmp("/", path) == 0) {
@@ -417,6 +442,10 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int res;
     struct dirent *entry = malloc(offsetof(struct dirent, d_name) + max_filename_length(real) + 1);
+    FREE(real);
+    if (entry == NULL) {
+        return -ENOMEM;
+    }
     struct dirent *rp;
     while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
         filler(buf, rp->d_name, NULL, 0);
@@ -657,8 +686,13 @@ int main(int argc, char **argv)
         backfs.real_root = nonopt_arguments[0];
     }
 
+#if 1
+    char *cwd = getcwd(NULL, 0); // non-standard usage, Linux only
+#else
+    // standard POSIX, but ugly
     char cwd[PATH_MAX];
     getcwd(cwd, PATH_MAX);
+#endif
 
     if (backfs.real_root == NULL) {
 //        if (args.argc < 2 || (strcmp(args.argv[1], "-o") == 0) ? args.argc != 5 : args.argc != 3) {
@@ -676,9 +710,7 @@ int main(int argc, char **argv)
 
     if (backfs.real_root[0] != '/') {
         const char *rel = backfs.real_root;
-
-        backfs.real_root = (char*)malloc(strlen(cwd)+strlen(rel)+2);
-        sprintf(backfs.real_root, "%s/%s", cwd, rel);
+        asprintf(&backfs.real_root, "%s/%s", cwd, rel);
     }
 
     DIR *d;
@@ -696,10 +728,10 @@ int main(int argc, char **argv)
 
     if (backfs.cache_dir[0] != '/') {
         char *rel = backfs.cache_dir;
-
-        backfs.cache_dir = (char*)malloc(strlen(cwd)+strlen(rel)+2);
-        sprintf(backfs.cache_dir, "%s/%s", cwd, rel);
+        asprintf(&backfs.cache_dir, "%s/%s", cwd, rel);
     }
+
+    FREE(cwd);
 
 #ifndef NOSYSLOG
     openlog("BackFS", 0, LOG_USER);
@@ -717,21 +749,23 @@ int main(int argc, char **argv)
         return 4;
     }
 
-    char buf[PATH_MAX];
-    snprintf(buf, PATH_MAX, "%s/buckets", backfs.cache_dir);
+    char *buf = NULL;
+    asprintf(&buf, "%s/buckets", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache bucket directory");
         return 5;
     }
+    FREE(buf);
 
-    snprintf(buf, PATH_MAX, "%s/map", backfs.cache_dir);
+    asprintf(&buf, "%s/map", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache map directory");
         return 6;
     }
+    FREE(buf);
 	
     unsigned long long cache_block_size = 0;
-    snprintf(buf, PATH_MAX, "%s/buckets/bucket_size", backfs.cache_dir);
+    asprintf(&buf, "%s/buckets/bucket_size", backfs.cache_dir);
     bool has_block_size_marker = false;
     FILE *f = fopen(buf, "r");
     if (f == NULL) {
@@ -772,6 +806,7 @@ int main(int argc, char **argv)
         fclose(f);
         f = NULL;
     }
+    FREE(buf);
 
     uint64_t device_size = (uint64_t)(cachedir_statvfs.f_bsize * cachedir_statvfs.f_blocks);
     

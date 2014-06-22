@@ -9,7 +9,7 @@ DEFINES=-D_FILE_OFFSET_BITS=64 \
 	-D_POSIX_C_SOURCE=201201 \
 	-D_GNU_SOURCE \
 	-DBACKFS_VERSION="\"$(VERSION)\"" \
-	-DBACKFS_RW
+#	-DBACKFS_RW
 
 CFLAGS=-std=c1x -pedantic -g3 $(DEFINES) -I/usr/include/fuse
 LDFLAGS=-lfuse
