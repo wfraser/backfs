@@ -698,10 +698,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("%d read\n", num_nonopt_args_read);
-    fuse_opt_add_arg(&args, nonopt_arguments[num_nonopt_args_read - 1]);
-    if (num_nonopt_args_read == 2) {
-        backfs.real_root = nonopt_arguments[0];
+    if (num_nonopt_args_read > 0) {
+        fuse_opt_add_arg(&args, nonopt_arguments[num_nonopt_args_read - 1]);
+        if (num_nonopt_args_read == 2) {
+            backfs.real_root = nonopt_arguments[0];
+        }
+    }
+    else {
+        fprintf(stderr, "BackFS: error: you need to specify a mount point.\n");
+        usage();
+        fuse_opt_add_arg(&args, "-ho");
+        backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+        return -1;
     }
 
 #if 1
