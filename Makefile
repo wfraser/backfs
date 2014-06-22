@@ -13,8 +13,7 @@ DEFINES=-D_FILE_OFFSET_BITS=64 \
 BRANCH=$(shell test -d .git && (git branch | grep '^*' | cut -c3-) || echo "unknown")
 
 ifeq ($(BRANCH),rw)
-	echo "BACKFS_RW defined"
-	DEFINES=$(DEFINES) -DBACKFS_RW
+	DEFINES+= -DBACKFS_RW
 endif
 
 CFLAGS=-std=c1x -pedantic -g3 $(DEFINES) -I/usr/include/fuse
