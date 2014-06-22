@@ -1,3 +1,8 @@
+/*
+ * BackFS utility functions
+ * Copyright (c) 2014 William R. Fraser
+ */
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
