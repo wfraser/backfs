@@ -20,6 +20,7 @@
 #include <dirent.h>
 
 #include <sys/statvfs.h>
+#include <sys/stat.h>
 
 #include <pthread.h>
 
@@ -127,6 +128,76 @@ int backfs_control_file_write(const char *path, const char *buf, size_t len, off
     return len;
 }
 
+int backfs_access(const char *path, int mode)
+{
+    char modestr[4] = {0};
+    size_t modestr_pos = 0;
+
+    int checkmode = 0;
+    if (mode & F_OK) {
+        modestr[0] = 'f';
+    }
+    else {
+        if (mode & R_OK) {
+            modestr[modestr_pos++] = 'r';
+            checkmode |= 4;
+        }
+        if (mode & W_OK) {
+            modestr[modestr_pos++] = 'w';
+            checkmode |= 2;
+        }
+        if (mode & X_OK) {
+            modestr[modestr_pos++] = 'x';
+            checkmode |= 1;
+        }
+    }
+    DEBUG("Backfs: access (%s) %s\n", modestr, path);
+
+    int ret = 0;
+    char *real = NULL;
+
+    REALPATH(real, path);
+    struct stat stbuf;
+    ret = lstat(real, &stbuf);
+    if (ret == -1) {
+        ret = -errno;
+        goto exit;
+    }
+
+    DEBUG("checkmode: 0%o\n", checkmode);
+
+    if (checkmode > 0) {
+        if (!backfs.rw && (mode & W_OK)) {
+            ret = -EACCES;
+            goto exit;
+        }
+
+        DEBUG("fullmode: 0%o\n", stbuf.st_mode);
+
+        struct fuse_context *ctx = fuse_get_context();
+
+        int shift = 0;
+        if (ctx->uid == stbuf.st_uid) {
+            shift = 6;
+        }
+        else if (ctx->gid == stbuf.st_gid) {
+            shift = 3;
+        }
+        int mode = (stbuf.st_mode & (0x7 << shift)) >> shift;
+
+        DEBUG("mode: 0%o\n", mode);
+
+        if ((mode & checkmode) != checkmode) {
+            ret = -EACCES;
+            goto exit;
+        }
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
     DEBUG("BackFS: open %s\n", path);
@@ -146,18 +217,14 @@ int backfs_open(const char *path, struct fuse_file_info *fi)
     }
 
     REALPATH(real, path);
-    struct stat stbuf;
-    ret = lstat(real, &stbuf);
-    FREE(real);
-    if (ret == -1) {
+    int fd = open(real, fi->flags);
+    if (fd == -1) {
+        PERROR("open");
         ret = -errno;
         goto exit;
     }
-
-    if (!backfs.rw && (fi->flags & 3) != O_RDONLY) {
-        ret = -EACCES;
-        goto exit;
-    }
+    
+    fi->fh = fd;
 
 exit:
     FREE(real);
@@ -233,13 +300,15 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     REALPATH(real, path);
     ret = lstat(real, stbuf);
     
-    // no write or exec perms
-    stbuf->st_mode &= ~0333;
+    // no write perms
+    if (!backfs.rw) {
+        stbuf->st_mode &= ~0222;
+    }
 
     if (ret == -1) {
         ret = -errno;
     } else {
-        DEBUG("BackFS: mode: %o\n", stbuf->st_mode);
+        DEBUG("BackFS: mode: 0%o\n", stbuf->st_mode);
         ret = 0;
     }
 
@@ -345,12 +414,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
             DEBUG("reading block %lu from real file: %s\n",
                     (unsigned long) block, real);
-            int fd = open(real, O_RDONLY);
-            if (fd == -1) {
-                PERROR("error opening real file");
-                ret = -EIO;
-                goto exit;
-            }
+            int fd = (int)fi->fh;
             
             // read the entire block
             block_buf = (char*)malloc(backfs.block_size);
@@ -358,11 +422,9 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                     backfs.block_size * block);
             if (nread == -1) {
                 PERROR("read error on real file");
-                close(fd);
                 ret = -EIO;
                 goto exit;
             } else {
-                close(fd);
                 DEBUG("got %lu bytes from real file\n", (unsigned long) nread);
                 DEBUG("adding to cache\n");
                 cache_add(path, block, block_buf, nread, real_stat.st_mtime);
@@ -475,15 +537,6 @@ exit:
     return 0;
 }
 
-int backfs_access(const char *path, int mode)
-{
-    if (mode & W_OK) {
-        return -EACCES;
-    }
-
-    return 0;
-}
-
 int backfs_truncate(const char *path, off_t offset)
 {
     DEBUG("truncate %s, %u\n", path, offset);
@@ -495,6 +548,77 @@ int backfs_truncate(const char *path, off_t offset)
     }
 
     return -EACCES;
+}
+
+int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
+{
+    DEBUG("create (mode 0%o) %s\n", mode, path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = open(real, O_RDONLY | O_CREAT | O_EXCL); // not sure on the read/write mode here...
+    if (ret == -1) {
+        PERROR("error opening real file for create");
+        ret = -errno;
+        goto exit;
+    }
+    info->fh = ret;
+
+    ret = chmod(real, mode);
+    if (ret == -1) {
+        PERROR("chmod");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_unlink(const char *path)
+{
+    DEBUG("unlink %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) { 
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = unlink(real);
+    if (ret == -1) {
+        PERROR("unlink");
+        ret = -errno;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_release(const char *path, struct fuse_file_info *info)
+{
+    DEBUG("release: %s\n", path);
+
+    if (info->fh != 0) {
+        // If we saved a file handle here from 
+        DEBUG("closing saved file handle\n");
+        close((int)info->fh);
+    }
+
+    // FUSE ignores the return value here.
+    return 0;
 }
 
 #define STUB_(func) \
@@ -512,7 +636,6 @@ int backfs_##func(const char *path, __VA_ARGS__) \
 }
 
 STUB(mkdir, mode_t mode)
-STUB_(unlink)
 STUB_(rmdir)
 STUB(symlink, const char *other)
 STUB(rename, const char *path_new)
@@ -527,7 +650,6 @@ STUB(getxattr, const char *a, char *b, size_t c)
 STUB(listxattr, char *a, size_t b)
 STUB(removexattr, const char *a)
 STUB(fsyncdir, int a, struct fuse_file_info *ffi)
-STUB(create, mode_t mode, struct fuse_file_info *ffi)
 STUB(lock, struct fuse_file_info *ffi, int cmd, struct flock *flock)
 STUB(utimens, const struct timespec tv[2])
 STUB(bmap, size_t blocksize, uint64_t *idx)
@@ -574,7 +696,7 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(write),
     IMPL(readlink),
     IMPL(truncate),
-//  IMPL(release),      // not needed
+    IMPL(release),
 //  IMPL(releasedir),   // not needed
 //  IMPL(ftruncate)     // redundant, use truncate instead
 //  IMPL(fgetattr),     // redundant, use getattr instead
