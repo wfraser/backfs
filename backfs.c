@@ -231,19 +231,94 @@ exit:
     return ret;
 }
 
-int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
+int backfs_write(const char *path, const char *buf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
+    DEBUG("write %s %lx %lx\n", path, size, offset);
+
     if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
-        return backfs_control_file_write(path, buf, len, offset, fi);
+        return backfs_control_file_write(path, buf, size, offset, fi);
+    }
+    else if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
+        return -EACCES;
     }
 
     if (!backfs.rw) {
         return -EACCES;
     }
 
-    //TODO
-    return -EIO;
+    int ret = 0;
+    bool locked = false;
+    bool first = true;
+    
+    int bytes_written = 0;
+    uint32_t first_block = offset / backfs.block_size;
+    uint32_t last_block = (offset+size) / backfs.block_size;
+    uint32_t block;
+    off_t buf_offset = 0;
+    for (block = first_block; block <= last_block; block++) {
+        size_t block_size;
+
+        if (block == first_block)
+            block_size = ((block + 1) * backfs.block_size) - offset;
+        else if (block == last_block)
+            block_size = size - buf_offset;
+        else
+            block_size = backfs.block_size;
+
+        if (block_size > size)
+            block_size = size;
+        if (block_size == 0)
+            continue;
+
+        pthread_mutex_lock(&backfs.lock);
+        locked = true;
+
+        if (first) {
+            DEBUG("writing to 0x%lx to 0x%lx, block size is 0x%lx\n",
+                (unsigned long)offset,
+                (unsigned long)offset+size,
+                (unsigned long)backfs.block_size);
+            first = false;
+        }
+        
+        DEBUG("writing block %lu, 0x%lx to 0x%lx\n",
+            (unsigned long)block,
+            (unsigned long)offset + buf_offset,
+            (unsigned long)offset + buf_offset + block_size);
+
+        ssize_t nwritten = pwrite((int)fi->fh, buf + buf_offset, block_size, offset + buf_offset);
+
+        bytes_written += nwritten;
+        DEBUG("bytes_written=%lu\n",(unsigned long)bytes_written);
+        if (nwritten < block_size) {
+            DEBUG("wrote less than requested, %lu instead of %lu\n",
+                (unsigned long)nwritten,
+                (unsigned long)block_size);
+            ret = bytes_written;
+            goto exit;
+        }
+        
+        if (block_size == backfs.block_size) {
+            // a full block, save it to the cache
+            cache_add(path, block, buf + buf_offset, nwritten, time(NULL));
+        }
+        else {
+            cache_try_invalidate_block(path, block);
+        }
+
+        pthread_mutex_unlock(&backfs.lock);
+        locked = false;
+
+        buf_offset += block_size;
+    }
+
+    ret = bytes_written;
+
+exit:
+    if (locked)
+        pthread_mutex_unlock(&backfs.lock);
+    return ret;
 }
 
 int backfs_readlink(const char *path, char *buf, size_t bufsize)
@@ -459,6 +534,10 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 goto exit;
             }
         }
+
+        pthread_mutex_unlock(&backfs.lock);
+        locked = false;
+
         buf_offset += block_size;
     }
 
@@ -563,7 +642,7 @@ int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
 
     REALPATH(real, path);
 
-    ret = open(real, O_RDONLY | O_CREAT | O_EXCL); // not sure on the read/write mode here...
+    ret = open(real, info->flags | O_CREAT | O_EXCL); // not sure on the read/write mode here...
     if (ret == -1) {
         PERROR("error opening real file for create");
         ret = -errno;
@@ -601,6 +680,9 @@ int backfs_unlink(const char *path)
         PERROR("unlink");
         ret = -errno;
     }
+
+    cache_invalidate_file(path);
+    // ignore its return value; don't care if it fails.
 
 exit:
     FREE(real);
@@ -773,6 +855,8 @@ int backfs_opt_proc(void *data, const char *arg, int key,
                "#                                  #\n"
                "####################################\n");
         backfs.rw = true;
+        // Turn on big_writes so we get writes > 4K in size. Helps cache.
+        fuse_opt_add_opt(outargs->argv, "big_writes");
         return FUSE_OPT_DISCARD;
 #else
         fprintf(stderr, "BackFS: mounting r/w is not supported in this build.\n");

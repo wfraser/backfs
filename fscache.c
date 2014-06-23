@@ -115,12 +115,12 @@ const char * bucketname(const char *path)
 
 void dump_queues()
 {
-#ifdef DEBUG
+#ifdef FSLL_DUMP
     fprintf(stderr, "BackFS Used Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/head", "buckets/tail");
     fprintf(stderr, "BackFS Free Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/free_head", "buckets/free_tail");
-#endif //DEBUG
+#endif //FSLL_DUMP
 }
 
 /*
@@ -437,7 +437,8 @@ int cache_invalidate_file(const char *filename)
     return retval;
 }
 
-int cache_invalidate_block(const char *filename, uint32_t block)
+int cache_invalidate_block_(const char *filename, uint32_t block,
+    bool warn_if_not_exist)
 {
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "map%s/%lu",
@@ -447,8 +448,10 @@ int cache_invalidate_block(const char *filename, uint32_t block)
     
     char *bucket = fsll_getlink(cache_dir, mappath);
     if (bucket == NULL) {
-        WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
-                (unsigned long) block, filename);
+        if (warn_if_not_exist) {
+            WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
+                    (unsigned long) block, filename);
+        }
         pthread_mutex_unlock(&lock);
         return -ENOENT;
     }
@@ -458,6 +461,16 @@ int cache_invalidate_block(const char *filename, uint32_t block)
     pthread_mutex_unlock(&lock);
 
     return 0;
+}
+
+int cache_invalidate_block(const char *filename, uint32_t block)
+{
+    return cache_invalidate_block_(filename, block, true);
+}
+
+int cache_try_invalidate_block(const char *filename, uint32_t block)
+{
+    return cache_invalidate_block_(filename, block, false);
 }
 
 int cache_free_orphan_buckets()
@@ -721,8 +734,8 @@ void make_space_available(uint64_t bytes_needed)
  * Important: this must be the FULL block. All subsequent reads will
  * assume that the full block is here.
  */
-int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
-              time_t mtime)
+int cache_add(const char *filename, uint32_t block, const char *buf,
+              uint64_t len, time_t mtime)
 {
     if (len > bucket_max_size) {
         errno = EOVERFLOW;
