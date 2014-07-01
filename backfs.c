@@ -52,6 +52,20 @@ bool backfs_log_stderr = false;
 
 #define FREE(var) { free(var); var = NULL; }
 
+#define FORWARD(func, ...) \
+    ret = func(__VA_ARGS__); \
+    if (ret == -1) { \
+        PERROR(#func); \
+        ret = -errno; \
+        goto exit; \
+    }
+
+#define RW_ONLY() \
+    if (!backfs.rw) { \
+        ret = -EACCES; \
+        goto exit; \
+    }
+
 void usage()
 {
     fprintf(stderr, 
@@ -703,11 +717,162 @@ int backfs_release(const char *path, struct fuse_file_info *info)
     return 0;
 }
 
-#define STUB_(func) \
-int backfs_##func(const char *path) \
+int backfs_mkdir(const char *path, mode_t mode)
+{
+    DEBUG("mkdir (mode 0%o) %s\n", mode, path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = mkdir(real, mode);
+    if (ret == -1) {
+        PERROR("mkdir");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_rmdir(const char *path)
+{
+    DEBUG("rmdir %s", path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = rmdir(real);
+    if (ret == -1) {
+        PERROR("rmdir");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_symlink(const char *target, const char *path)
+{
+    DEBUG("symlink %s -> %s", target, path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = symlink(target, real);
+    if (ret == -1) {
+        PERROR("symlink");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+// These two functions work in exactly the same way.
+#define BACKFS_RENAME_OR_LINK(rename_or_link) \
+int backfs_##rename_or_link(const char *path, const char *path_new) \
 { \
-    DEBUG(#func ": %s\n", path); \
-    return -ENOSYS; \
+    DEBUG(#rename_or_link " %s -> %s", path, path_new); \
+    int ret = 0; \
+    char *real = NULL; \
+    char *real_new = NULL; \
+\
+    if (!backfs.rw) { \
+        ret = -EACCES; \
+        goto exit; \
+    } \
+\
+    REALPATH(real, path); \
+    REALPATH(real_new, path_new); \
+\
+    ret = rename_or_link(real, real_new); \
+    if (ret == -1) { \
+        PERROR(#rename_or_link); \
+        ret = -errno; \
+        goto exit; \
+    } \
+\
+exit: \
+    FREE(real); \
+    FREE(real_new);\
+    return ret; \
+}
+
+BACKFS_RENAME_OR_LINK(rename)
+BACKFS_RENAME_OR_LINK(link)
+
+int backfs_chmod(const char *path, mode_t mode)
+{
+    DEBUG("chmod %s 0%o", path, mode);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = chmod(real, mode);
+    if (ret == -1) {
+        PERROR("chmod");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_chown(const char *path, uid_t uid, gid_t gid)
+{
+    DEBUG("chown %s %d:%d", path, uid, gid);
+    int ret = 0;
+    char *real = NULL;
+
+    if (!backfs.rw) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+
+    ret = chown(real, uid, gid);
+    if (ret == -1) {
+        PERROR("chown");
+        ret = -errno;
+        goto exit;
+    }
+
+exit:
+    FREE(real);
+    return ret;
 }
 
 #define STUB(func, ...) \
@@ -717,13 +882,6 @@ int backfs_##func(const char *path, __VA_ARGS__) \
     return -ENOSYS; \
 }
 
-STUB(mkdir, mode_t mode)
-STUB_(rmdir)
-STUB(symlink, const char *other)
-STUB(rename, const char *path_new)
-STUB(link, const char *other)
-STUB(chmod, mode_t mode)
-STUB(chown, uid_t uid, gid_t gid)
 STUB(statfs, struct statvfs *stat)
 STUB(flush, struct fuse_file_info *ffi)
 STUB(fsync, int n, struct fuse_file_info *ffi)
