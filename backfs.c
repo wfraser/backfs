@@ -53,18 +53,30 @@ bool backfs_log_stderr = false;
 #define FREE(var) { free(var); var = NULL; }
 
 #define FORWARD(func, ...) \
-    ret = func(__VA_ARGS__); \
-    if (ret == -1) { \
-        PERROR(#func); \
-        ret = -errno; \
-        goto exit; \
-    }
+    do { \
+        ret = func(__VA_ARGS__); \
+        if (ret == -1) { \
+            PERROR(#func); \
+            ret = -errno; \
+            goto exit; \
+        } \
+    } while (0)
 
 #define RW_ONLY() \
-    if (!backfs.rw) { \
-        ret = -EACCES; \
-        goto exit; \
-    }
+    do { \
+        if (!backfs.rw) { \
+            ret = -EROFS; \
+            goto exit; \
+        } \
+    } while (0)
+
+#define REALPATH(real, path) \
+    do { \
+        if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
+            ret = -ENOMEM; \
+            goto exit; \
+        } \
+    } while (0)
 
 void usage()
 {
@@ -92,14 +104,6 @@ void usage()
 
 const char BACKFS_CONTROL_FILE[] = "/.backfs_control";
 const char BACKFS_VERSION_FILE[] = "/.backfs_version";
-
-#define REALPATH(real, path) \
-    do { \
-        if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
-            ret = -ENOMEM; \
-            goto exit; \
-        } \
-    } while (0)
 
 int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
         struct fuse_file_info *fi)
@@ -660,7 +664,7 @@ int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
     }
     info->fh = ret;
 
-    FORWARD(chmod, real, mode) 
+    FORWARD(chmod, real, mode);
 
 exit:
     FREE(real);
@@ -799,6 +803,21 @@ exit:
     return ret;
 }
 
+int backfs_utimens(const char *path, const struct timespec tv[2])
+{
+    DEBUG("utimens %s", path);
+    int ret;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(utimensat, 0, real, tv, 0);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
 #define STUB(func, ...) \
 int backfs_##func(const char *path, __VA_ARGS__) \
 { \
@@ -806,16 +825,22 @@ int backfs_##func(const char *path, __VA_ARGS__) \
     return -ENOSYS; \
 }
 
+#define NOTSUP(func, ...) \
+int backfs_##func(const char *path, __VA_ARGS__) \
+{ \
+    DEBUG(#func ": %s\n", path); \
+    return -ENOTSUP; \
+}
+
 STUB(statfs, struct statvfs *stat)
 STUB(flush, struct fuse_file_info *ffi)
 STUB(fsync, int n, struct fuse_file_info *ffi)
-STUB(setxattr, const char *a, const char *b, size_t c, int d)
-STUB(getxattr, const char *a, char *b, size_t c)
-STUB(listxattr, char *a, size_t b)
-STUB(removexattr, const char *a)
+NOTSUP(setxattr, const char *a, const char *b, size_t c, int d)
+NOTSUP(getxattr, const char *a, char *b, size_t c)
+NOTSUP(listxattr, char *a, size_t b)
+NOTSUP(removexattr, const char *a)
 STUB(fsyncdir, int a, struct fuse_file_info *ffi)
 STUB(lock, struct fuse_file_info *ffi, int cmd, struct flock *flock)
-STUB(utimens, const struct timespec tv[2])
 STUB(bmap, size_t blocksize, uint64_t *idx)
 STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, void *data)
 STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
