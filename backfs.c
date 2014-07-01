@@ -720,7 +720,7 @@ exit:
 
 int backfs_rmdir(const char *path)
 {
-    DEBUG("rmdir %s", path);
+    DEBUG("rmdir %s\n", path);
     int ret = 0;
     char *real = NULL;
 
@@ -735,7 +735,7 @@ exit:
 
 int backfs_symlink(const char *target, const char *path)
 {
-    DEBUG("symlink %s -> %s", target, path);
+    DEBUG("symlink %s -> %s\n", target, path);
     int ret = 0;
     char *real = NULL;
 
@@ -752,7 +752,7 @@ exit:
 #define BACKFS_RENAME_OR_LINK(rename_or_link) \
 int backfs_##rename_or_link(const char *path, const char *path_new) \
 { \
-    DEBUG(#rename_or_link " %s -> %s", path, path_new); \
+    DEBUG(#rename_or_link " %s -> %s\n", path, path_new); \
     int ret = 0; \
     char *real = NULL; \
     char *real_new = NULL; \
@@ -775,7 +775,7 @@ BACKFS_RENAME_OR_LINK(link)
 
 int backfs_chmod(const char *path, mode_t mode)
 {
-    DEBUG("chmod %s 0%o", path, mode);
+    DEBUG("chmod %s 0%o\n", path, mode);
     int ret = 0;
     char *real = NULL;
 
@@ -790,7 +790,7 @@ exit:
 
 int backfs_chown(const char *path, uid_t uid, gid_t gid)
 {
-    DEBUG("chown %s %d:%d", path, uid, gid);
+    DEBUG("chown %s %d:%d\n", path, uid, gid);
     int ret = 0;
     char *real = NULL;
 
@@ -805,7 +805,7 @@ exit:
 
 int backfs_utimens(const char *path, const struct timespec tv[2])
 {
-    DEBUG("utimens %s", path);
+    DEBUG("utimens %s\n", path);
     int ret;
     char *real = NULL;
 
