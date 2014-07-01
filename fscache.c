@@ -400,8 +400,7 @@ int cache_invalidate_file_real(const char *filename)
     DIR *d = opendir(mappath);
     if (d == NULL) {
         PERROR("opendir in cache_invalidate");
-        pthread_mutex_unlock(&lock);
-        return -1*errno;
+        return -errno;
     }
 
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);

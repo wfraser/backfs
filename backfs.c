@@ -592,6 +592,17 @@ exit:
     return ret;
 }
 
+int backfs_releasedir(const char *path, struct fuse_file_info *fi)
+{
+    DEBUG("releasedir %s\n", path);
+    int ret = 0;
+
+    FORWARD(closedir, (DIR*)fi->fh);
+
+exit:
+    return ret;
+}
+
 int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
@@ -875,6 +886,7 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(poll),
     IMPL(flock),
     IMPL(fallocate),
+    IMPL(releasedir),   // not needed
 #endif
     IMPL(open),
     IMPL(read),
@@ -886,7 +898,6 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(readlink),
     IMPL(truncate),
     IMPL(release),
-//  IMPL(releasedir),   // not needed
 //  IMPL(ftruncate)     // redundant, use truncate instead
 //  IMPL(fgetattr),     // redundant, use getattr instead
 //  IMPL(read_buf),     // use read instead
