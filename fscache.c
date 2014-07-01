@@ -902,6 +902,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
     pthread_mutex_unlock(&lock);
     //###
 
+    free(bucketpath);
     return 0;
 }
 
