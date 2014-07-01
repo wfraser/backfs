@@ -649,11 +649,7 @@ int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
 
     ret = open(real, info->flags | O_CREAT | O_EXCL); // not sure on the read/write mode here...
@@ -664,12 +660,7 @@ int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
     }
     info->fh = ret;
 
-    ret = chmod(real, mode);
-    if (ret == -1) {
-        PERROR("chmod");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(chmod, real, mode) 
 
 exit:
     FREE(real);
@@ -682,18 +673,9 @@ int backfs_unlink(const char *path)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) { 
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = unlink(real);
-    if (ret == -1) {
-        PERROR("unlink");
-        ret = -errno;
-    }
+    FORWARD(unlink, real);
 
     cache_invalidate_file(path);
     // ignore its return value; don't care if it fails.
@@ -723,19 +705,9 @@ int backfs_mkdir(const char *path, mode_t mode)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = mkdir(real, mode);
-    if (ret == -1) {
-        PERROR("mkdir");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(mkdir, real, mode);
 
 exit:
     FREE(real);
@@ -748,19 +720,9 @@ int backfs_rmdir(const char *path)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = rmdir(real);
-    if (ret == -1) {
-        PERROR("rmdir");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(rmdir, real);
 
 exit:
     FREE(real);
@@ -773,19 +735,9 @@ int backfs_symlink(const char *target, const char *path)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = symlink(target, real);
-    if (ret == -1) {
-        PERROR("symlink");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(symlink, target, real);
 
 exit:
     FREE(real);
@@ -801,20 +753,12 @@ int backfs_##rename_or_link(const char *path, const char *path_new) \
     char *real = NULL; \
     char *real_new = NULL; \
 \
-    if (!backfs.rw) { \
-        ret = -EACCES; \
-        goto exit; \
-    } \
+    RW_ONLY(); \
 \
     REALPATH(real, path); \
     REALPATH(real_new, path_new); \
 \
-    ret = rename_or_link(real, real_new); \
-    if (ret == -1) { \
-        PERROR(#rename_or_link); \
-        ret = -errno; \
-        goto exit; \
-    } \
+    FORWARD(rename_or_link, real, real_new); \
 \
 exit: \
     FREE(real); \
@@ -831,19 +775,9 @@ int backfs_chmod(const char *path, mode_t mode)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = chmod(real, mode);
-    if (ret == -1) {
-        PERROR("chmod");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(chmod, real, mode);
 
 exit:
     FREE(real);
@@ -856,19 +790,9 @@ int backfs_chown(const char *path, uid_t uid, gid_t gid)
     int ret = 0;
     char *real = NULL;
 
-    if (!backfs.rw) {
-        ret = -EACCES;
-        goto exit;
-    }
-
+    RW_ONLY();
     REALPATH(real, path);
-
-    ret = chown(real, uid, gid);
-    if (ret == -1) {
-        PERROR("chown");
-        ret = -errno;
-        goto exit;
-    }
+    FORWARD(chown, real, uid, gid);
 
 exit:
     FREE(real);
