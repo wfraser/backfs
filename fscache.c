@@ -702,13 +702,13 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     return 0;
 }
 
-uint64_t make_some_space_available()
+uint64_t free_tail_bucket()
 {
     uint64_t freed_bytes = 0;
     char *tail = fsll_getlink(cache_dir, "buckets/tail");
 
     if (tail == NULL) {
-        ERROR("can't free space, no buckets in queue!\n");
+        ERROR("can't free the tail bucket, no buckets in queue!\n");
         goto exit;
     }
 
@@ -751,7 +751,7 @@ void make_space_available(uint64_t bytes_needed)
             (unsigned long long) bytes_needed);
 
     while (bytes_freed < bytes_needed) {
-        bytes_freed += make_some_space_available();
+        bytes_freed += free_tail_bucket();
     }
 
     DEBUG("freed %llu bytes total\n",
@@ -818,7 +818,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
                     if (errno == ENOSPC) {
                         // try to free some space
                         DEBUG("mkdir says ENOSPC, freeing and trying again\n");
-                        make_some_space_available();
+                        free_tail_bucket();
                         errno = EAGAIN;
                     }
                     else {
@@ -904,7 +904,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
 
         // Try again, more forcefully this time.
         // Don't care if the FS says it has space, make some space anyway.
-        make_some_space_available();
+        free_tail_bucket();
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
