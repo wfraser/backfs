@@ -585,7 +585,7 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
         goto exit;
     }
 
-    fi->fh = (uint64_t)(long)dir;
+    fi->fh = (uint64_t)(intptr_t)dir;
 
 exit:
     FREE(real);
@@ -597,7 +597,8 @@ int backfs_releasedir(const char *path, struct fuse_file_info *fi)
     DEBUG("releasedir %s\n", path);
     int ret = 0;
 
-    FORWARD(closedir, (DIR*)fi->fh);
+    DIR *dir = (DIR*)(intptr_t)(fi->fh);
+    FORWARD(closedir, dir);
 
 exit:
     return ret;
@@ -610,7 +611,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     int ret = 0;
     char *real = NULL;
 
-    DIR *dir = (DIR*)(long)(fi->fh);
+    DIR *dir = (DIR*)(intptr_t)(fi->fh);
 
     if (dir == NULL) {
         ERROR("got null dir handle");
@@ -856,7 +857,7 @@ STUB(bmap, size_t blocksize, uint64_t *idx)
 STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, void *data)
 STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
 STUB(flock, struct fuse_file_info *ffi, int op)
-STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+//STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
 
 #define IMPL(func) .func = backfs_##func
 
@@ -885,13 +886,13 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(ioctl),
     IMPL(poll),
     IMPL(flock),
-    IMPL(fallocate),
-    IMPL(releasedir),   // not needed
+//    IMPL(fallocate),  // too new; a lot of FUSE installs don't have this yet.
 #endif
     IMPL(open),
     IMPL(read),
     IMPL(opendir),
     IMPL(readdir),
+    IMPL(releasedir),
     IMPL(getattr),
     IMPL(access),
     IMPL(write),
