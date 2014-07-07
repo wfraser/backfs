@@ -317,7 +317,18 @@ int backfs_write(const char *path, const char *buf, size_t size, off_t offset,
         
         if (block_size == backfs.block_size) {
             // a full block, save it to the cache
-            cache_add(path, block, buf + buf_offset, nwritten, time(NULL));
+            for (int loop = 0; loop < 5; loop++) {
+                if (0 == cache_add(
+                            path,
+                            block,
+                            buf + buf_offset,
+                            nwritten,
+                            time(NULL))
+                        || errno != EAGAIN) {
+                    break;
+                }
+                DEBUG("cache retry #%d\n", loop+1);
+            }
         }
         else {
             cache_try_invalidate_block(path, block);
@@ -518,10 +529,23 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
             } else {
                 DEBUG("got %lu bytes from real file\n", (unsigned long) nread);
                 DEBUG("adding to cache\n");
-                cache_add(path, block, block_buf, nread, real_stat.st_mtime);
+                
+                for (int loop = 0; loop < 5; loop++) {
+                    if (0 == cache_add(
+                                path,
+                                block,
+                                block_buf,
+                                nread,
+                                real_stat.st_mtime)
+                            || errno != EAGAIN) {
+                        break;
+                    }
+                    DEBUG("cache retry #%d\n", loop+1);
+                }
 
                 memcpy(rbuf+buf_offset, block_buf+block_offset, 
                         ((nread < block_size) ? nread : block_size));
+                FREE(block_buf);
 
                 if (nread < block_size) {
                     DEBUG("read less than requested, %lu instead of %lu\n", 
@@ -560,11 +584,11 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
     ret = bytes_read;
 
 exit:
+    FREE(real);
+    FREE(block_buf);
     if (locked) {
         pthread_mutex_unlock(&backfs.lock);
     }
-    FREE(real);
-    FREE(block_buf);
     return ret;
 }
 

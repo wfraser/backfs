@@ -81,7 +81,7 @@ uint64_t get_cache_fs_free_size(const char *root)
         PERROR("statfs in get_cache_fs_free_size");
         return 0;
     }
-    uint64_t dev_free = (uint64_t) s.f_bfree * s.f_bsize;
+    uint64_t dev_free = (uint64_t) s.f_bavail * s.f_bsize;
 
     return dev_free;
 }
@@ -331,9 +331,8 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
 
         // if this was the last block, remove the directory
         trim_directory(parent);
-
-        FREE(parent);
     }
+    FREE(parent);
     fsll_makelink(bucketpath, "parent", NULL);
 
     if (free_in_the_middle_is_bad) {
@@ -527,6 +526,8 @@ int cache_free_orphan_buckets()
         FREE(parent);
     }
 
+    closedir(d);
+    FREE(e);
     pthread_mutex_unlock(&lock);
 
     return 0;
@@ -701,30 +702,33 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     return 0;
 }
 
-void make_space_available(uint64_t bytes_needed)
+void make_space_available_(uint64_t bytes_needed, bool try_harder)
 {
     uint64_t bytes_freed = 0;
 
     if (bytes_needed == 0)
         return;
 
-    uint64_t dev_free = get_cache_fs_free_size(cache_dir);
-
-    if (dev_free >= bytes_needed) {
-        // device has plenty
-        if (use_whole_device) {
-            return;
-        } else {
-            // cache_size is limiting factor
-            if (cache_used_size + bytes_needed <= cache_size) {
+    // Sometimes the device's reported free size is misleading.
+    // Set try_harder to force collection regardless of that.
+    if (!try_harder) {
+        uint64_t dev_free = get_cache_fs_free_size(cache_dir);
+        if (dev_free >= bytes_needed) {
+            // device has plenty
+            if (use_whole_device) {
                 return;
             } else {
-                bytes_needed = (cache_used_size + bytes_needed) - cache_size;
+                // cache_size is limiting factor
+                if (cache_used_size + bytes_needed <= cache_size) {
+                    return;
+                } else {
+                    bytes_needed = (cache_used_size + bytes_needed) - cache_size;
+                }
             }
+        } else {
+            // dev_free is limiting factor
+            bytes_needed = bytes_needed - dev_free;
         }
-    } else {
-        // dev_free is limiting factor
-        bytes_needed = bytes_needed - dev_free;
     }
 
     DEBUG("need to free %llu bytes\n",
@@ -747,6 +751,16 @@ void make_space_available(uint64_t bytes_needed)
 
     DEBUG("freed %llu bytes total\n",
             (unsigned long long) bytes_freed);
+}
+
+void make_space_available(uint64_t bytes_needed)
+{
+    make_space_available_(bytes_needed, false);
+}
+
+void make_space_available_by_force(uint64_t bytes_needed)
+{
+    make_space_available_(bytes_needed, true);
 }
 
 /*
@@ -806,10 +820,19 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
                 component[i] = '\0';
                 DEBUG("making %s\n", component);
                 if(mkdir(component, 0700) == -1 && errno != EEXIST) {
-                    PERROR("mkdir in cache_add");
-                    ERROR("\tcaused by mkdir(%s)\n", component);
-                    errno = EIO;
+                    if (errno == ENOSPC) {
+                        // try to free some space
+                        DEBUG("mkdir says ENOSPC, freeing and trying again\n");
+                        make_space_available_by_force(1);
+                        errno = EAGAIN;
+                    }
+                    else {
+                        PERROR("mkdir in cache_add");
+                        ERROR("\tcaused by mkdir(%s)\n", component);
+                        errno = EIO;
+                    }
                     FREE(component);
+                    FREE(full_filemap_dir);
                     pthread_mutex_unlock(&lock);
                     return -1;
                 }
@@ -885,7 +908,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
         DEBUG("not all bytes written to cache\n");
 
         // try again
-        make_space_available(len - bytes_written);
+        make_space_available_by_force(len - bytes_written);
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
