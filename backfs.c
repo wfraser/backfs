@@ -597,8 +597,12 @@ int backfs_releasedir(const char *path, struct fuse_file_info *fi)
     DEBUG("releasedir %s\n", path);
     int ret = 0;
 
-    DIR *dir = (DIR*)(intptr_t)(fi->fh);
-    FORWARD(closedir, dir);
+    if (fi->fh != 0) {
+        DEBUG("releasedir closing directory");
+        DIR *dir = (DIR*)(intptr_t)(fi->fh);
+        fi->fh = 0;
+        FORWARD(closedir, dir);
+    }
 
 exit:
     return ret;
@@ -638,8 +642,6 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         filler(buf, rp->d_name, NULL, 0);
     }
     free(entry);
-
-    closedir(dir);
 
 exit:
     FREE(real);
