@@ -702,65 +702,60 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     return 0;
 }
 
-void make_space_available_(uint64_t bytes_needed, bool try_harder)
+uint64_t make_some_space_available()
+{
+    uint64_t freed_bytes = 0;
+    char *tail = fsll_getlink(cache_dir, "buckets/tail");
+
+    if (tail == NULL) {
+        ERROR("can't free space, no buckets in queue!\n");
+        goto exit;
+    }
+
+    freed_bytes = free_bucket(tail);
+    DEBUG("freed %llu bytes in bucket %lu\n",
+            (unsigned long long)freed_bytes,
+            (unsigned long)bucket_path_to_number(tail));
+
+exit:
+    FREE(tail);
+    return freed_bytes;
+}
+
+void make_space_available(uint64_t bytes_needed)
 {
     uint64_t bytes_freed = 0;
 
     if (bytes_needed == 0)
         return;
 
-    // Sometimes the device's reported free size is misleading.
-    // Set try_harder to force collection regardless of that.
-    if (!try_harder) {
-        uint64_t dev_free = get_cache_fs_free_size(cache_dir);
-        if (dev_free >= bytes_needed) {
-            // device has plenty
-            if (use_whole_device) {
+    uint64_t dev_free = get_cache_fs_free_size(cache_dir);
+    if (dev_free >= bytes_needed) {
+        // device has plenty
+        if (use_whole_device) {
+            return;
+        } else {
+            // cache_size is limiting factor
+            if (cache_used_size + bytes_needed <= cache_size) {
                 return;
             } else {
-                // cache_size is limiting factor
-                if (cache_used_size + bytes_needed <= cache_size) {
-                    return;
-                } else {
-                    bytes_needed = (cache_used_size + bytes_needed) - cache_size;
-                }
+                bytes_needed = (cache_used_size + bytes_needed) - cache_size;
             }
-        } else {
-            // dev_free is limiting factor
-            bytes_needed = bytes_needed - dev_free;
         }
+    } else {
+        // dev_free is limiting factor
+        bytes_needed = bytes_needed - dev_free;
     }
 
     DEBUG("need to free %llu bytes\n",
             (unsigned long long) bytes_needed);
 
     while (bytes_freed < bytes_needed) {
-        char *b = fsll_getlink(cache_dir, "buckets/tail");
-        
-        if (b == NULL) {
-            ERROR("bucket queue empty in make_space_available!\n");
-            return;
-        }
-
-        uint64_t f = free_bucket(b);
-        DEBUG("freed %llu bytes in bucket #%lu\n",
-                (unsigned long long) f, (unsigned long) bucket_path_to_number(b));
-        FREE(b);
-        bytes_freed += f;
+        bytes_freed += make_some_space_available();
     }
 
     DEBUG("freed %llu bytes total\n",
             (unsigned long long) bytes_freed);
-}
-
-void make_space_available(uint64_t bytes_needed)
-{
-    make_space_available_(bytes_needed, false);
-}
-
-void make_space_available_by_force(uint64_t bytes_needed)
-{
-    make_space_available_(bytes_needed, true);
 }
 
 /*
@@ -823,7 +818,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
                     if (errno == ENOSPC) {
                         // try to free some space
                         DEBUG("mkdir says ENOSPC, freeing and trying again\n");
-                        make_space_available_by_force(1);
+                        make_some_space_available();
                         errno = EAGAIN;
                     }
                     else {
@@ -907,8 +902,9 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
     while (bytes_written != len) {
         DEBUG("not all bytes written to cache\n");
 
-        // try again
-        make_space_available_by_force(len - bytes_written);
+        // Try again, more forcefully this time.
+        // Don't care if the FS says it has space, make some space anyway.
+        make_some_space_available();
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
