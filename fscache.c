@@ -274,7 +274,7 @@ void trim_directory(const char *path)
             }
             
             // if we got here, the directory has entries
-            DEBUG("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            DEBUG("directory has entries -- in %s found '%s'\n", dir, e->d_name);
             closedir(d);
             FREE(copy);
             return;
@@ -616,10 +616,10 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
         if (bucket_mtime < (uint64_t)mtime) {
-            DEBUG("cache data is %llu seconds older than the data caller wants\n",
+            DEBUG("cache data is %llu seconds older than the backing data\n",
                  (unsigned long long) mtime - bucket_mtime);
         } else {
-            DEBUG("cache data is %llu seconds newer than the data caller wants\n",
+            DEBUG("cache data is %llu seconds newer than the backing data\n",
                  (unsigned long long) bucket_mtime - mtime);
         }
         cache_invalidate_file_real(filename, true);
