@@ -695,7 +695,9 @@ int backfs_unlink(const char *path)
     REALPATH(real, path);
     FORWARD(unlink, real);
 
-    cache_invalidate_file(path);
+    if (0 == cache_try_invalidate_file(path)) {
+        DEBUG("unlink: invalidated cache for the file");
+    }
     // ignore its return value; don't care if it fails.
 
 exit:

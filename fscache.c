@@ -393,13 +393,14 @@ int cache_invalidate_bucket(const char *filename, uint32_t block,
     return 0;
 }
 
-int cache_invalidate_file_real(const char *filename)
+int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
 {
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
     DIR *d = opendir(mappath);
     if (d == NULL) {
-        PERROR("opendir in cache_invalidate");
+        if (errno != ENOENT || error_if_not_exist)
+            PERROR("opendir in cache_invalidate");
         return -errno;
     }
 
@@ -428,12 +429,22 @@ int cache_invalidate_file_real(const char *filename)
     return 0;
 }
 
-int cache_invalidate_file(const char *filename)
+int cache_invalidate_file_(const char *filename, bool error_if_not_exist)
 {
     pthread_mutex_lock(&lock);
-    int retval = cache_invalidate_file_real(filename);
+    int retval = cache_invalidate_file_real(filename, error_if_not_exist);
     pthread_mutex_unlock(&lock);   
     return retval;
+}
+
+int cache_invalidate_file(const char *filename)
+{
+    cache_invalidate_file_(filename, true);
+}
+
+int cache_try_invalidate_file(const char *filename)
+{
+    cache_invalidate_file_(filename, false);
 }
 
 int cache_invalidate_block_(const char *filename, uint32_t block,
@@ -600,7 +611,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
             DEBUG("cache data is %llu seconds newer than the data caller wants\n",
                  (unsigned long long) bucket_mtime - mtime);
         }
-        cache_invalidate_file_real(filename);
+        cache_invalidate_file_real(filename, true);
         errno = ENOENT;
         pthread_mutex_unlock(&lock);
         return -1;

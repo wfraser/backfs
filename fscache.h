@@ -18,6 +18,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
 int cache_invalidate_block(const char *filename, uint32_t block);
 int cache_try_invalidate_block(const char *filename, uint32_t block);
 int cache_invalidate_file(const char *filename);
+int cache_try_invalidate_file(const char *filename);
 int cache_free_orphan_buckets();
 
 #endif //BACKFS_CACHE_WRF_H
