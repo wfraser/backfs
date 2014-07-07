@@ -8,4 +8,6 @@
 size_t max_filename_length(const char* path);
 char* areadlink(const char* path);
 
+#define FREE(var) { free(var); var = NULL; }
+
 #endif //BACKFS_UTIL_H

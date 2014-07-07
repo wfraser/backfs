@@ -50,8 +50,6 @@ static struct backfs backfs = {0};
 int backfs_log_level;
 bool backfs_log_stderr = false;
 
-#define FREE(var) { free(var); var = NULL; }
-
 #define FORWARD(func, ...) \
     do { \
         ret = func(__VA_ARGS__); \
