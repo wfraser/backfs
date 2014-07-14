@@ -144,7 +144,7 @@ char * makebucket(uint64_t number)
  * If one from the free queue is returned, that bucket is made the head of the
  * used queue.
  */
-char * next_bucket()
+char * next_bucket(void)
 {
     char *bucket = fsll_getlink(cache_dir, "buckets/free_head");
     if (bucket != NULL) {
@@ -490,7 +490,7 @@ int cache_try_invalidate_block(const char *filename, uint32_t block)
     return cache_invalidate_block_(filename, block, false);
 }
 
-int cache_free_orphan_buckets()
+int cache_free_orphan_buckets(void)
 {
     char bucketdir[PATH_MAX];
     snprintf(bucketdir, PATH_MAX, "%s/buckets", cache_dir);
@@ -944,6 +944,103 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
 
     FREE(bucketpath);
     return 0;
+}
+
+int cache_has_file_real(const char *filename, uint64_t *cached_byte_count, bool do_lock)
+{
+    DEBUG("cache_has_file %s\n", filename);
+
+    int ret = 0;
+    bool locked = false;
+    char *mapdir = NULL;
+    char *data = NULL;
+    DIR *dir = NULL;
+
+    if (filename == NULL || cached_byte_count == NULL) {
+        errno = EINVAL;
+        ret = -1;
+        goto exit;
+    }
+
+    if (do_lock) {
+        pthread_mutex_lock(&lock);
+        locked = true;
+    }
+
+    // Look up the file in the map.
+    asprintf(&mapdir, "%s/map%s", cache_dir, filename);
+    dir = opendir(mapdir);
+    if (dir == NULL) {
+        if (errno == ENOENT) {
+            DEBUG("not in cache (%s)\n", mapdir);
+            ret = 0;
+            goto exit;
+        }
+        else {
+            PERROR("opendir");
+            ERROR("\topendir on %s\n", mapdir);
+            ret = -EIO;
+            goto exit;
+        }
+    }
+
+    // Check if it's a file or directory (see if it has an mtime file).
+    asprintf(&data, "%s/mtime", mapdir);
+    bool is_file = false;
+    struct stat mtime_stat = {0};
+    if (0 == stat(data, &mtime_stat)) {
+        is_file = (mtime_stat.st_mode & S_IFREG) != 0;
+    }
+    else if (errno != ENOENT) {
+        PERROR("stat");
+        ERROR("\tstat on %s\n", mapdir);
+        ret = -EIO;
+        goto exit;
+    }
+
+    // Loop over the sub-entries in the map.
+    struct dirent *dirent = NULL;
+    while ((dirent = readdir(dir)) != NULL) {
+        if (dirent->d_name[0] != '.' && strcmp(dirent->d_name, "mtime") != 0) {
+            FREE(data);
+
+            if (is_file) {
+                asprintf(&data, "%s/%s/data", mapdir, dirent->d_name);
+            
+                struct stat statbuf = {0};
+                if (0 != stat(data, &statbuf)) {
+                    PERROR("stat");
+                    ERROR("\tstat on %s\n", data);
+                    ret = -EIO;
+                    goto exit;
+                }
+                
+                DEBUG("%llu bytes in %s\n", statbuf.st_size, data);
+                *cached_byte_count += statbuf.st_size;
+            }
+            else {
+                asprintf(&data, "%s/%s", filename, dirent->d_name);
+                ret = cache_has_file_real(data, cached_byte_count, false /*don't lock*/);
+                if (ret != 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+exit:
+    if (locked)
+        pthread_mutex_unlock(&lock);
+    FREE(mapdir);
+    FREE(data);
+    closedir(dir);
+    return ret;
+}
+
+int cache_has_file(const char *filename, uint64_t *cached_bytes)
+{
+    *cached_bytes = 0;
+    return cache_has_file_real(filename, cached_bytes, true);
 }
 
 /*

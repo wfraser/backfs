@@ -21,6 +21,8 @@
 
 #include <sys/statvfs.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
+#include <attr/xattr.h>
 
 #include <pthread.h>
 
@@ -844,7 +846,7 @@ exit:
 int backfs_utimens(const char *path, const struct timespec tv[2])
 {
     DEBUG("utimens %s\n", path);
-    int ret;
+    int ret = 0;
     char *real = NULL;
 
     RW_ONLY();
@@ -856,6 +858,224 @@ exit:
     return ret;
 }
 
+//
+// Support for custom attributes
+//
+
+enum
+{
+    ATTRIBUTE_INVALID_ACTION,
+    ATTRIBUTE_READ,
+    ATTRIBUTE_WRITE,
+    ATTRIBUTE_WRITE_REPLACE,
+    ATTRIBUTE_CREATE,
+    ATTRIBUTE_REMOVE,
+};
+
+struct backfs_attribute_handler
+{
+    const char *attribute_name;
+    int (*handler_fn)(const char *path, const char *name, char *value, size_t size,
+                            int action);
+};
+
+#define BACKFS_ATTRIBUTE_HANDLER(attribute_name) \
+int backfs_##attribute_name##_handler( \
+    const char *path, \
+    const char *name, \
+    char *value, \
+    size_t size, \
+    int action \
+    )
+
+BACKFS_ATTRIBUTE_HANDLER(in_cache)
+{
+    int ret = 0;
+    char *out = NULL;
+
+    if (action != ATTRIBUTE_READ) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    uint64_t cached_bytes = 0;
+    ret = cache_has_file(path, &cached_bytes);
+    if (ret != 0) {
+        goto exit;
+    }
+
+    int required_space = asprintf(&out, "%llu", cached_bytes);
+
+    if (size == 0) {
+        ret = required_space;
+    }
+    else if (size < required_space) {
+        ret = -ERANGE;
+    }
+    else {
+        memcpy(value, out, required_space);
+        ret = required_space;
+    }
+
+exit:
+    FREE(out);
+    return ret;
+}
+
+const struct backfs_attribute_handler backfs_attributes[] = {
+    { "user.backfs.in_cache", &backfs_in_cache_handler }
+};
+
+int backfs_handle_attribute(const char *path, const char *name, char *value, size_t size,
+                            int action)
+{
+    int ret = -ENOTSUP;
+    bool handled = false;
+
+    for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+        if (strcmp(backfs_attributes[i].attribute_name, name) == 0) {
+            ret = backfs_attributes[i].handler_fn(path, name, value, size, action);
+            handled = true;
+            break;
+        }
+    }
+
+    const char prefix[] = "user.backfs.";
+    if (!handled && strncmp(name, prefix, COUNTOF(prefix) - 1) == 0) {
+        switch (action) {
+        case ATTRIBUTE_READ:
+        case ATTRIBUTE_REMOVE:
+            ret = -ENOATTR;
+            break;
+        case ATTRIBUTE_WRITE:
+        case ATTRIBUTE_WRITE_REPLACE:
+        case ATTRIBUTE_CREATE:
+            ret = -EACCES;
+            break;
+        default:
+            ret = -EINVAL;
+        }
+    }
+
+exit:
+    return ret;
+}
+
+int backfs_getxattr(const char *path, const char *name, char *value, size_t size)
+{
+    DEBUG("getxattr %s %s %d\n", path, name, size);
+    int ret = 0;
+    char *real = NULL;
+
+    ret = backfs_handle_attribute(path, name, value, size, ATTRIBUTE_READ);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(getxattr, real, name, value, size);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_setxattr(const char *path, const char *name, const char *value, size_t size,
+                    int flags)
+{
+    DEBUG("setxattr %s %s\n", path, name);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+
+    int action;
+    if (flags == XATTR_CREATE)
+        action = ATTRIBUTE_CREATE;
+    else if (flags == XATTR_REPLACE)
+        action = ATTRIBUTE_WRITE_REPLACE;
+    else 
+        action = ATTRIBUTE_WRITE;
+
+    ret = backfs_handle_attribute(path, name, (char*)value, size, action);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(setxattr, real, name, value, size, flags);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_removexattr(const char *path, const char *name)
+{
+    DEBUG("removexattr %s %s\n", path, name);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+
+    ret = backfs_handle_attribute(path, name, NULL, 0, ATTRIBUTE_REMOVE);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(removexattr, real, name);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_listxattr(const char *path, char *list, size_t size)
+{
+    DEBUG("listxattr %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    REALPATH(real, path);
+
+    if (size == 0) {
+        ret = listxattr(real, NULL, 0);
+        
+        for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+            ret += strlen(backfs_attributes[i].attribute_name) + 1;
+        }
+    }
+    else {
+        for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+            size_t name_len = strlen(backfs_attributes[i].attribute_name) + 1;
+            if (name_len > size) {
+                ret = ERANGE;
+                goto exit;
+            }
+
+            memcpy(list, backfs_attributes[i].attribute_name, name_len);
+            size -= name_len;
+            list += name_len;
+            ret += name_len;
+        }
+
+        ssize_t listsize = listxattr(real, list, size);
+        DEBUG("forwarded: %d\n", listsize);
+        if (listsize < 0) {
+            goto exit;
+        }
+        else {
+            ret += listsize;
+        }
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+//
+// Stubs for the remaining syscalls
+//
+
 #define STUB(func, ...) \
 int backfs_##func(const char *path, __VA_ARGS__) \
 { \
@@ -863,20 +1083,9 @@ int backfs_##func(const char *path, __VA_ARGS__) \
     return -ENOSYS; \
 }
 
-#define NOTSUP(func, ...) \
-int backfs_##func(const char *path, __VA_ARGS__) \
-{ \
-    DEBUG(#func ": %s\n", path); \
-    return -ENOTSUP; \
-}
-
 STUB(statfs, struct statvfs *stat)
 STUB(flush, struct fuse_file_info *ffi)
 STUB(fsync, int n, struct fuse_file_info *ffi)
-NOTSUP(setxattr, const char *a, const char *b, size_t c, int d)
-NOTSUP(getxattr, const char *a, char *b, size_t c)
-NOTSUP(listxattr, char *a, size_t b)
-NOTSUP(removexattr, const char *a)
 STUB(fsyncdir, int a, struct fuse_file_info *ffi)
 STUB(lock, struct fuse_file_info *ffi, int cmd, struct flock *flock)
 STUB(bmap, size_t blocksize, uint64_t *idx)
