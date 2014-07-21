@@ -22,7 +22,6 @@
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
-#include <attr/xattr.h>
 
 #include <pthread.h>
 
@@ -945,7 +944,7 @@ int backfs_handle_attribute(const char *path, const char *name, char *value, siz
         switch (action) {
         case ATTRIBUTE_READ:
         case ATTRIBUTE_REMOVE:
-            ret = -ENOATTR;
+            ret = -ENODATA; // should be ENOATTR but this isn't as widely available
             break;
         case ATTRIBUTE_WRITE:
         case ATTRIBUTE_WRITE_REPLACE:
@@ -1110,8 +1109,6 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(flush),
     IMPL(fsync),
     IMPL(setxattr),
-    IMPL(getxattr),
-    IMPL(listxattr),
     IMPL(removexattr),
     IMPL(fsyncdir),
     IMPL(create),
@@ -1134,6 +1131,8 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(readlink),
     IMPL(truncate),
     IMPL(release),
+    IMPL(getxattr),
+    IMPL(listxattr),
 //  IMPL(ftruncate)     // redundant, use truncate instead
 //  IMPL(fgetattr),     // redundant, use getattr instead
 //  IMPL(read_buf),     // use read instead
