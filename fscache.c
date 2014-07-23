@@ -490,6 +490,49 @@ int cache_try_invalidate_block(const char *filename, uint32_t block)
     return cache_invalidate_block_(filename, block, false);
 }
 
+int cache_try_invalidate_blocks_above(const char *filename, uint32_t block)
+{
+    DEBUG("trying to invalidate blocks >= %ld in %s\n", block, filename);
+    int ret = 0;
+    DIR *mapdir = NULL;
+    bool locked = false;
+    struct dirent *e = NULL;
+
+    char mappath[PATH_MAX];
+    snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
+
+    pthread_mutex_lock(&lock);
+    locked = true;
+
+    mapdir = opendir(mappath);
+    if (mapdir == NULL) {
+        ret = -errno;
+        goto exit;
+    }
+
+    e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
+    struct dirent *result = e;
+    while ((readdir_r(mapdir, e, &result) == 0) && (result != NULL)) {
+        if ((e->d_name[0] < '0') || (e->d_name[0] > '9')) continue;
+
+        uint32_t block_found;
+        sscanf(e->d_name, "%lu", &block_found);
+
+        if (block_found >= block) {
+            char *bucket = fsll_getlink(mappath, e->d_name);
+            cache_invalidate_bucket(filename, block_found, bucket);
+            FREE(bucket);
+        }
+    }
+
+exit:
+    closedir(mapdir);
+    FREE(e);
+    if (locked)
+        pthread_mutex_unlock(&lock);
+    return ret;
+}
+
 int cache_free_orphan_buckets(void)
 {
     char bucketdir[PATH_MAX];

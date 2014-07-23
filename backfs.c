@@ -123,7 +123,7 @@ int backfs_control_file_write(const char *path, const char *buf, size_t len, off
     if (*data == ' ' || *data == '\n')
         data++;
 
-    DEBUG("BackFS: command(%s) data(%s)\n", command, data);
+    DEBUG("backfs_control: command(%s) data(%s)\n", command, data);
 
     if (strcmp(command, "test") == 0) {
         // nonsensical error "Cross-device link"
@@ -168,7 +168,7 @@ int backfs_access(const char *path, int mode)
             checkmode |= 1;
         }
     }
-    DEBUG("Backfs: access (%s) %s\n", modestr, path);
+    DEBUG("access (%s) %s\n", modestr, path);
 
     int ret = 0;
     char *real = NULL;
@@ -217,7 +217,7 @@ exit:
 
 int backfs_open(const char *path, struct fuse_file_info *fi)
 {
-    DEBUG("BackFS: open %s\n", path);
+    DEBUG("open %s\n", path);
     int ret = 0;
     char *real = NULL;
 
@@ -370,7 +370,7 @@ exit:
 
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
-    DEBUG("BackFS: getattr %s\n", path);
+    DEBUG("getattr %s\n", path);
     int ret = 0;
     char *real = NULL;
 
@@ -411,7 +411,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     if (ret == -1) {
         ret = -errno;
     } else {
-        DEBUG("BackFS: mode: 0%o\n", stbuf->st_mode);
+        DEBUG("mode: 0%o\n", stbuf->st_mode);
         ret = 0;
     }
 
@@ -671,9 +671,9 @@ exit:
     return 0;
 }
 
-int backfs_truncate(const char *path, off_t offset)
+int backfs_truncate(const char *path, off_t length)
 {
-    DEBUG("truncate %s, %u\n", path, offset);
+    DEBUG("truncate %s, %u\n", path, length);
 
     if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
         // Probably due to user doing 'echo foo > .backfs_control' instead of using '>>'.
@@ -681,7 +681,19 @@ int backfs_truncate(const char *path, off_t offset)
         return 0;
     }
 
-    return -EACCES;
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(truncate, real, length);
+
+    uint32_t block = length / backfs.block_size;
+    cache_try_invalidate_blocks_above(path, block);
+
+exit:
+    FREE(real);
+    return ret;
 }
 
 int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
@@ -719,7 +731,7 @@ int backfs_unlink(const char *path)
     FORWARD(unlink, real);
 
     if (0 == cache_try_invalidate_file(path)) {
-        DEBUG("unlink: invalidated cache for the file");
+        DEBUG("unlink: invalidated cache for the file\n");
     }
     // ignore its return value; don't care if it fails.
 
