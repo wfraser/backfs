@@ -38,6 +38,9 @@
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
 
+// Comment this out if you're on an older system that doesn't have this call.
+#define HAVE_UTIMENS
+
 struct backfs { 
     char *cache_dir;
     char *real_root;
@@ -854,6 +857,7 @@ exit:
     return ret;
 }
 
+#ifdef HAVE_UTIMENS
 int backfs_utimens(const char *path, const struct timespec tv[2])
 {
     DEBUG("utimens %s\n", path);
@@ -868,6 +872,7 @@ exit:
     FREE(real);
     return ret;
 }
+#endif
 
 //
 // Support for custom attributes
@@ -1083,6 +1088,7 @@ exit:
     return ret;
 }
 
+#ifdef STUB_FUNCTIONS
 //
 // Stubs for the remaining syscalls
 //
@@ -1103,7 +1109,8 @@ STUB(bmap, size_t blocksize, uint64_t *idx)
 STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, void *data)
 STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
 STUB(flock, struct fuse_file_info *ffi, int op)
-//STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+#endif
 
 #define IMPL(func) .func = backfs_##func
 
@@ -1117,20 +1124,24 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(link),
     IMPL(chmod),
     IMPL(chown),
+    IMPL(setxattr),
+    IMPL(removexattr),
+    IMPL(create),
+#ifdef HAVE_UTIMENS
+    IMPL(utimens),
+#endif
+#ifdef STUB_FUNCTIONS
+    IMPL(fsyncdir),
     IMPL(statfs),
     IMPL(flush),
     IMPL(fsync),
-    IMPL(setxattr),
-    IMPL(removexattr),
-    IMPL(fsyncdir),
-    IMPL(create),
     IMPL(lock),
-    IMPL(utimens),
     IMPL(bmap),
     IMPL(ioctl),
     IMPL(poll),
     IMPL(flock),
-//    IMPL(fallocate),  // too new; a lot of FUSE installs don't have this yet.
+//    IMPL(fallocate),  // pretty new; a lot of FUSE installs don't have this yet.
+#endif
 #endif
     IMPL(open),
     IMPL(read),
