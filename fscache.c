@@ -1086,6 +1086,82 @@ int cache_has_file(const char *filename, uint64_t *cached_bytes)
     return cache_has_file_real(filename, cached_bytes, true);
 }
 
+int cache_rename(const char *path, const char *path_new)
+{
+    DEBUG("cache_rename %s\n\t%s\n", path, path_new);
+
+    int ret = 0;
+    char *mapdir = NULL;
+    char *mapdir_new = NULL;
+    DIR *dir = NULL;
+    char *parentlink = NULL;
+
+    if (path == NULL || path_new == NULL) {
+        errno = EINVAL;
+        ret = -1;
+        goto exit;
+    }
+
+    // Look up and rename the cache map dir.
+    asprintf(&mapdir, "%s/map%s", cache_dir, path);
+    asprintf(&mapdir_new, "%s/map%s", cache_dir, path_new);
+    ret = rename(mapdir, mapdir_new);
+    if (0 != ret) {
+        if (ENOENT == errno) {
+            DEBUG("not in cache: %s\n", path);
+            ret = 0;
+        }
+        else {
+            PERROR("rename");
+            ret = -EIO;
+        }
+        goto exit;
+    }
+
+    // Next, need to fix all the buckets' parent links.
+    dir = opendir(mapdir_new);
+    if (dir == NULL) {
+        PERROR("opendir");
+        ERROR("\topendir on %s\n", mapdir_new);
+        ret = -EIO;
+        goto exit;
+    }
+
+    size_t cch_parentlink = strlen(mapdir_new) + 20;
+    parentlink = (char*)malloc(cch_parentlink);
+
+    struct dirent *dirent = NULL;
+    while ((dirent = readdir(dir)) != NULL) {
+        if (dirent->d_name[0] != '.' && strcmp(dirent->d_name, "mtime") != 0) {
+            snprintf(parentlink, cch_parentlink, "%s/%s/parent",
+                mapdir_new, dirent->d_name);
+
+            ret = unlink(parentlink);
+            if (0 != ret) {
+                PERROR("unlink");
+                ERROR("\tunlink on %s\n", parentlink);
+                ret = -EIO;
+                goto exit;
+            }
+
+            ret = symlink(mapdir_new, parentlink);
+            if (0 != ret) {
+                PERROR("symlink");
+                ERROR("\tsymlink from %s\n\tto %s\n", parentlink, mapdir_new);
+                ret = -EIO;
+                goto exit;
+            }
+        }
+    }
+
+exit:
+    FREE(mapdir);
+    FREE(mapdir_new);
+    FREE(parentlink);
+    closedir(dir);
+    return ret;
+}
+
 /*
 
 This program is free software; you can redistribute it and/or modify

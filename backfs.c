@@ -803,29 +803,44 @@ exit:
 }
 
 // These two functions work in exactly the same way.
-#define BACKFS_RENAME_OR_LINK(rename_or_link) \
+#define BACKFS_RENAME_OR_LINK(rename_or_link, id) \
 int backfs_##rename_or_link(const char *path, const char *path_new) \
 { \
     DEBUG(#rename_or_link " %s -> %s\n", path, path_new); \
     int ret = 0; \
     char *real = NULL; \
     char *real_new = NULL; \
-\
+    bool locked = false; \
+    \
     RW_ONLY(); \
-\
+    \
     REALPATH(real, path); \
     REALPATH(real_new, path_new); \
-\
+    \
+    if (id == 0) \
+        locked = true; \
+        pthread_mutex_lock(&backfs.lock); \
+    \
     FORWARD(rename_or_link, real, real_new); \
+    \
+    if (id == 0) { \
+        int cache_ret = cache_rename(path, path_new); \
+        if (cache_ret != 0) { \
+            FORWARD(rename, real_new, real); \
+            ret = cache_ret; \
+        } \
+    } \
 \
 exit: \
+    if (id == 0 && locked) \
+        pthread_mutex_unlock(&backfs.lock); \
     FREE(real); \
     FREE(real_new);\
     return ret; \
 }
 
-BACKFS_RENAME_OR_LINK(rename)
-BACKFS_RENAME_OR_LINK(link)
+BACKFS_RENAME_OR_LINK(rename, 0)
+BACKFS_RENAME_OR_LINK(link, 1)
 
 int backfs_chmod(const char *path, mode_t mode)
 {

@@ -22,5 +22,6 @@ int cache_try_invalidate_file(const char *filename);
 int cache_free_orphan_buckets(void);
 int cache_has_file(const char *filename, uint64_t *cached_byte_count);
 int cache_try_invalidate_blocks_above(const char *filename, uint32_t block);
+int cache_rename(const char *path, const char *path_new);
 
 #endif //BACKFS_CACHE_WRF_H
