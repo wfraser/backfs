@@ -298,8 +298,15 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         // in case another thread is reading a full block as a result of a 
         // cache miss
-        pthread_mutex_lock(&backfs.lock);
-        locked = true;
+        if (!locked)
+        {
+            ret = pthread_mutex_lock(&backfs.lock);
+            if (ret) {
+                DEBUG("Error locking mutex: %d!", ret);
+                goto exit;
+            }
+            locked = true;
+        }
 
         if (first) {
             DEBUG("reading from 0x%lx to 0x%lx, block size is 0x%lx\n",
@@ -778,6 +785,9 @@ int main(int argc, char **argv)
     printf("initializing cache and scanning existing cache dir...\n");
     cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 
+    // Initializing mutex
+    pthread_mutex_init(&backfs.lock, NULL);
+    
     printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 
