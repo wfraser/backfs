@@ -358,12 +358,13 @@ int backfs_readlink(const char *path, char *buf, size_t bufsize)
 
     REALPATH(real, path);
 
-    ssize_t bytes_written = readlink(real, buf, bufsize);
+    ssize_t bytes_written = readlink(real, buf, bufsize-1);
     if (bytes_written == -1)
     {
         ret = -errno;
         goto exit;
     }
+    buf[bufsize] = '\0';
 
 exit:
     FREE(real);
