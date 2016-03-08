@@ -431,6 +431,9 @@ int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
         FREE(bucket);
     }
 
+    FREE(e);
+    closedir(d);
+
     return 0;
 }
 
