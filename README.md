@@ -1,7 +1,7 @@
 BackFS
 ======
 
-BackFS is a read-only FUSE filesystem designed to provide a large local disk cache for a remote network filesystem.
+BackFS is a FUSE filesystem designed to provide a large local disk cache for a remote network filesystem.
 
 Say you have a network filesystem, such as a SSH or FTP mounted share, and the connection to that share is rather slow.
 Locally, you have a sizable amount of disk space to spare, but not enough to make a complete local copy of the remote share.
@@ -76,6 +76,10 @@ Options
        - optional: size (in bytes) of the blocks stored in the cache.
          A read resulting in a cache miss will fetch this amount from the backing store.
          If unspecified, the default is 1 MiB (1048576 bytes).
+
+* `-o rw`
+       - optional: enable read-write mode. By default, BackFS operates as a read-only filesystem.
+         This option allows BackFS to function as a write-through cache.
 
 Requirements
 ------------
