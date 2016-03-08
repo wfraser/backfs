@@ -644,7 +644,6 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int ret = 0;
     char *real = NULL;
-
     DIR *dir = (DIR*)(intptr_t)(fi->fh);
 
     if (dir == NULL) {
