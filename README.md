@@ -190,7 +190,7 @@ Strictly speaking, the last step isn't needed, because once buckets aren't linke
 Todo List
 ---------
 
-* Make BackFS a write-through cache.
+* ???
 
 License
 -------

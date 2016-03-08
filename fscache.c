@@ -30,6 +30,7 @@ static pthread_mutex_t lock;
 #define BACKFS_LOG_SUBSYS "Cache"
 #include "global.h"
 #include "fsll.h"
+#include "util.h"
 
 extern int backfs_log_level;
 extern bool backfs_log_stderr;
@@ -68,7 +69,7 @@ uint64_t get_cache_used_size(const char *root)
     }
 
     closedir(dir);
-    free(e);
+    FREE(e);
 
     return total;
 }
@@ -80,7 +81,7 @@ uint64_t get_cache_fs_free_size(const char *root)
         PERROR("statfs in get_cache_fs_free_size");
         return 0;
     }
-    uint64_t dev_free = (uint64_t) s.f_bfree * s.f_bsize;
+    uint64_t dev_free = (uint64_t) s.f_bavail * s.f_bsize;
 
     return dev_free;
 }
@@ -115,12 +116,12 @@ const char * bucketname(const char *path)
 
 void dump_queues()
 {
-#ifdef DEBUG
+#ifdef FSLL_DUMP
     fprintf(stderr, "BackFS Used Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/head", "buckets/tail");
     fprintf(stderr, "BackFS Free Bucket Queue:\n");
     fsll_dump(cache_dir, "buckets/free_head", "buckets/free_tail");
-#endif //DEBUG
+#endif //FSLL_DUMP
 }
 
 /*
@@ -143,7 +144,7 @@ char * makebucket(uint64_t number)
  * If one from the free queue is returned, that bucket is made the head of the
  * used queue.
  */
-char * next_bucket()
+char * next_bucket(void)
 {
     char *bucket = fsll_getlink(cache_dir, "buckets/free_head");
     if (bucket != NULL) {
@@ -273,9 +274,9 @@ void trim_directory(const char *path)
             }
             
             // if we got here, the directory has entries
-            DEBUG("directory has entries -- in %s found %s type %d\n", dir, e->d_name, e->d_type);
+            DEBUG("directory has entries -- in %s found '%s'\n", dir, e->d_name);
             closedir(d);
-            free(copy);
+            FREE(copy);
             return;
         }
         
@@ -300,7 +301,7 @@ void trim_directory(const char *path)
             }
             
             WARN("in trim_directory, directory still not empty, but how? path was %s\n", dir);
-            free(copy);
+            FREE(copy);
             return;
         } else {
             DEBUG("removed empty map directory %s\n", dir);
@@ -309,7 +310,7 @@ void trim_directory(const char *path)
         dir = dirname(dir);
     }
 
-    free(copy);
+    FREE(copy);
 }
 
 /*
@@ -331,6 +332,7 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
         // if this was the last block, remove the directory
         trim_directory(parent);
     }
+    FREE(parent);
     fsll_makelink(bucketpath, "parent", NULL);
 
     if (free_in_the_middle_is_bad) {
@@ -338,6 +340,7 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
         if (n != NULL) {
             ERROR("bucket freed (#%lu) was not the queue tail\n",
                     (unsigned long) bucket_path_to_number(bucketpath));
+            FREE(n);
             return 0;
         }
     }
@@ -393,15 +396,16 @@ int cache_invalidate_bucket(const char *filename, uint32_t block,
     return 0;
 }
 
-int cache_invalidate_file_real(const char *filename)
+int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
 {
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
     DIR *d = opendir(mappath);
     if (d == NULL) {
-        PERROR("opendir in cache_invalidate");
-        pthread_mutex_unlock(&lock);
-        return -1*errno;
+        if (errno != ENOENT || error_if_not_exist) {
+            PERROR("opendir in cache_invalidate");
+        }
+        return -errno;
     }
 
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
@@ -424,20 +428,36 @@ int cache_invalidate_file_real(const char *filename)
         sscanf(e->d_name, "%lu", (unsigned long *)&block);
     
         cache_invalidate_bucket(filename, block, bucket);
+
+        FREE(bucket);
     }
+
+    FREE(e);
+    closedir(d);
 
     return 0;
 }
 
-int cache_invalidate_file(const char *filename)
+int cache_invalidate_file_(const char *filename, bool error_if_not_exist)
 {
     pthread_mutex_lock(&lock);
-    int retval = cache_invalidate_file_real(filename);
+    int retval = cache_invalidate_file_real(filename, error_if_not_exist);
     pthread_mutex_unlock(&lock);   
     return retval;
 }
 
-int cache_invalidate_block(const char *filename, uint32_t block)
+int cache_invalidate_file(const char *filename)
+{
+    return cache_invalidate_file_(filename, true);
+}
+
+int cache_try_invalidate_file(const char *filename)
+{
+    return cache_invalidate_file_(filename, false);
+}
+
+int cache_invalidate_block_(const char *filename, uint32_t block,
+    bool warn_if_not_exist)
 {
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "map%s/%lu",
@@ -447,20 +467,77 @@ int cache_invalidate_block(const char *filename, uint32_t block)
     
     char *bucket = fsll_getlink(cache_dir, mappath);
     if (bucket == NULL) {
-        WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
-                (unsigned long) block, filename);
+        if (warn_if_not_exist) {
+            WARN("Cache invalidation: block %lu of file %s doesn't exist.\n",
+                    (unsigned long) block, filename);
+        }
         pthread_mutex_unlock(&lock);
         return -ENOENT;
     }
 
     cache_invalidate_bucket(filename, block, bucket);
 
+    FREE(bucket);
+
     pthread_mutex_unlock(&lock);
 
     return 0;
 }
 
-int cache_free_orphan_buckets()
+int cache_invalidate_block(const char *filename, uint32_t block)
+{
+    return cache_invalidate_block_(filename, block, true);
+}
+
+int cache_try_invalidate_block(const char *filename, uint32_t block)
+{
+    return cache_invalidate_block_(filename, block, false);
+}
+
+int cache_try_invalidate_blocks_above(const char *filename, uint32_t block)
+{
+    DEBUG("trying to invalidate blocks >= %ld in %s\n", block, filename);
+    int ret = 0;
+    DIR *mapdir = NULL;
+    bool locked = false;
+    struct dirent *e = NULL;
+
+    char mappath[PATH_MAX];
+    snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
+
+    pthread_mutex_lock(&lock);
+    locked = true;
+
+    mapdir = opendir(mappath);
+    if (mapdir == NULL) {
+        ret = -errno;
+        goto exit;
+    }
+
+    e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
+    struct dirent *result = e;
+    while ((readdir_r(mapdir, e, &result) == 0) && (result != NULL)) {
+        if ((e->d_name[0] < '0') || (e->d_name[0] > '9')) continue;
+
+        uint32_t block_found;
+        sscanf(e->d_name, "%lu", &block_found);
+
+        if (block_found >= block) {
+            char *bucket = fsll_getlink(mappath, e->d_name);
+            cache_invalidate_bucket(filename, block_found, bucket);
+            FREE(bucket);
+        }
+    }
+
+exit:
+    closedir(mapdir);
+    FREE(e);
+    if (locked)
+        pthread_mutex_unlock(&lock);
+    return ret;
+}
+
+int cache_free_orphan_buckets(void)
 {
     char bucketdir[PATH_MAX];
     snprintf(bucketdir, PATH_MAX, "%s/buckets", cache_dir);
@@ -492,8 +569,12 @@ int cache_free_orphan_buckets()
             }
             free_bucket_mid_queue(bucketpath);
         }
+
+        FREE(parent);
     }
 
+    closedir(d);
+    FREE(e);
     pthread_mutex_unlock(&lock);
 
     return 0;
@@ -582,13 +663,13 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     if (bucket_mtime != (uint64_t)mtime) {
         // mtime mismatch; invalidate and return
         if (bucket_mtime < (uint64_t)mtime) {
-            DEBUG("cache data is %llu seconds older than the data caller wants\n",
+            DEBUG("cache data is %llu seconds older than the backing data\n",
                  (unsigned long long) mtime - bucket_mtime);
         } else {
-            DEBUG("cache data is %llu seconds newer than the data caller wants\n",
+            DEBUG("cache data is %llu seconds newer than the backing data\n",
                  (unsigned long long) bucket_mtime - mtime);
         }
-        cache_invalidate_file_real(filename);
+        cache_invalidate_file_real(filename, true);
         errno = ENOENT;
         pthread_mutex_unlock(&lock);
         return -1;
@@ -622,7 +703,7 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     if (e->bucket->size - offset < len) {
         WARN("length + offset for read is past the end\n");
         errno = ENXIO;
-        free(f);
+        FREE(f);
         pthread_mutex_unlock(&lock);
         return -1;
     }
@@ -652,8 +733,8 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
         );
         /*
         errno = EIO;
-        free(f);
-        free(cachefile);
+        FREE(f);
+        FREE(cachefile);
         close(fd);
         pthread_mutex_unlock(&lock);
         return -1;
@@ -668,6 +749,26 @@ int cache_fetch(const char *filename, uint32_t block, uint64_t offset,
     return 0;
 }
 
+uint64_t free_tail_bucket()
+{
+    uint64_t freed_bytes = 0;
+    char *tail = fsll_getlink(cache_dir, "buckets/tail");
+
+    if (tail == NULL) {
+        ERROR("can't free the tail bucket, no buckets in queue!\n");
+        goto exit;
+    }
+
+    freed_bytes = free_bucket(tail);
+    DEBUG("freed %llu bytes in bucket %lu\n",
+            (unsigned long long)freed_bytes,
+            (unsigned long)bucket_path_to_number(tail));
+
+exit:
+    FREE(tail);
+    return freed_bytes;
+}
+
 void make_space_available(uint64_t bytes_needed)
 {
     uint64_t bytes_freed = 0;
@@ -676,7 +777,6 @@ void make_space_available(uint64_t bytes_needed)
         return;
 
     uint64_t dev_free = get_cache_fs_free_size(cache_dir);
-
     if (dev_free >= bytes_needed) {
         // device has plenty
         if (use_whole_device) {
@@ -698,18 +798,7 @@ void make_space_available(uint64_t bytes_needed)
             (unsigned long long) bytes_needed);
 
     while (bytes_freed < bytes_needed) {
-        char *b = fsll_getlink(cache_dir, "buckets/tail");
-        
-        if (b == NULL) {
-            ERROR("bucket queue empty in make_space_available!\n");
-            return;
-        }
-
-        uint64_t f = free_bucket(b);
-        DEBUG("freed %llu bytes in bucket #%lu\n",
-                (unsigned long long) f, (unsigned long) bucket_path_to_number(b));
-        free(b);
-        bytes_freed += f;
+        bytes_freed += free_tail_bucket();
     }
 
     DEBUG("freed %llu bytes total\n",
@@ -721,8 +810,8 @@ void make_space_available(uint64_t bytes_needed)
  * Important: this must be the FULL block. All subsequent reads will
  * assume that the full block is here.
  */
-int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
-              time_t mtime)
+int cache_add(const char *filename, uint32_t block, const char *buf,
+              uint64_t len, time_t mtime)
 {
     if (len > bucket_max_size) {
         errno = EOVERFLOW;
@@ -746,7 +835,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     if (bucketpath != NULL) {
         if (fsll_file_exists(bucketpath, "data")) {
             WARN("data already exists in cache\n");
-            free(bucketpath);
+            FREE(bucketpath);
             pthread_mutex_unlock(&lock);
             return 0;
         }
@@ -763,7 +852,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     DEBUG("full filemap dir = %s\n", full_filemap_dir);
 
     if (!fsll_file_exists(cache_dir, filemap)) {
-        free(filemap);
+        FREE(filemap);
         size_t i;
         // start from "$cache_dir/map/"
         for (i = strlen(cache_dir) + 5; i < strlen(full_filemap_dir); i++) {
@@ -773,23 +862,33 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
                 component[i] = '\0';
                 DEBUG("making %s\n", component);
                 if(mkdir(component, 0700) == -1 && errno != EEXIST) {
-                    PERROR("mkdir in cache_add");
-                    ERROR("\tcaused by mkdir(%s)\n", component);
-                    errno = EIO;
-                    free(component);
+                    if (errno == ENOSPC) {
+                        // try to free some space
+                        DEBUG("mkdir says ENOSPC, freeing and trying again\n");
+                        free_tail_bucket();
+                        errno = EAGAIN;
+                    }
+                    else {
+                        PERROR("mkdir in cache_add");
+                        ERROR("\tcaused by mkdir(%s)\n", component);
+                        errno = EIO;
+                    }
+                    FREE(component);
+                    FREE(full_filemap_dir);
                     pthread_mutex_unlock(&lock);
                     return -1;
                 }
-                free(component);
+                FREE(component);
             }
         }
     } else {
-        free(filemap);
+        FREE(filemap);
     }
-    free(full_filemap_dir);
+    FREE(full_filemap_dir);
 
     make_space_available(len);
 
+    FREE(bucketpath);
     bucketpath = next_bucket();
     DEBUG("bucket path = %s\n", bucketpath);
 
@@ -798,7 +897,7 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     char *fullfilemap = (char*)malloc(PATH_MAX);
     snprintf(fullfilemap, PATH_MAX, "%s/%s", cache_dir, fileandblock);
     fsll_makelink(bucketpath, "parent", fullfilemap);
-    free(fullfilemap);
+    FREE(fullfilemap);
     
     // write mtime
     
@@ -850,8 +949,9 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     while (bytes_written != len) {
         DEBUG("not all bytes written to cache\n");
 
-        // try again
-        make_space_available(len - bytes_written);
+        // Try again, more forcefully this time.
+        // Don't care if the FS says it has space, make some space anyway.
+        free_tail_bucket();
 
         ssize_t more_bytes_written = write(fd, buf + bytes_written, len - bytes_written);
 
@@ -889,7 +989,181 @@ int cache_add(const char *filename, uint32_t block, char *buf, uint64_t len,
     pthread_mutex_unlock(&lock);
     //###
 
+    FREE(bucketpath);
     return 0;
+}
+
+int cache_has_file_real(const char *filename, uint64_t *cached_byte_count, bool do_lock)
+{
+    DEBUG("cache_has_file %s\n", filename);
+
+    int ret = 0;
+    bool locked = false;
+    char *mapdir = NULL;
+    char *data = NULL;
+    DIR *dir = NULL;
+
+    if (filename == NULL || cached_byte_count == NULL) {
+        errno = EINVAL;
+        ret = -1;
+        goto exit;
+    }
+
+    if (do_lock) {
+        pthread_mutex_lock(&lock);
+        locked = true;
+    }
+
+    // Look up the file in the map.
+    asprintf(&mapdir, "%s/map%s", cache_dir, filename);
+    dir = opendir(mapdir);
+    if (dir == NULL) {
+        if (errno == ENOENT) {
+            DEBUG("not in cache (%s)\n", mapdir);
+            ret = 0;
+            goto exit;
+        }
+        else {
+            PERROR("opendir");
+            ERROR("\topendir on %s\n", mapdir);
+            ret = -EIO;
+            goto exit;
+        }
+    }
+
+    // Check if it's a file or directory (see if it has an mtime file).
+    asprintf(&data, "%s/mtime", mapdir);
+    bool is_file = false;
+    struct stat mtime_stat = {0};
+    if (0 == stat(data, &mtime_stat)) {
+        is_file = (mtime_stat.st_mode & S_IFREG) != 0;
+    }
+    else if (errno != ENOENT) {
+        PERROR("stat");
+        ERROR("\tstat on %s\n", mapdir);
+        ret = -EIO;
+        goto exit;
+    }
+
+    // Loop over the sub-entries in the map.
+    struct dirent *dirent = NULL;
+    while ((dirent = readdir(dir)) != NULL) {
+        if (dirent->d_name[0] != '.' && strcmp(dirent->d_name, "mtime") != 0) {
+            FREE(data);
+
+            if (is_file) {
+                asprintf(&data, "%s/%s/data", mapdir, dirent->d_name);
+            
+                struct stat statbuf = {0};
+                if (0 != stat(data, &statbuf)) {
+                    PERROR("stat");
+                    ERROR("\tstat on %s\n", data);
+                    ret = -EIO;
+                    goto exit;
+                }
+                
+                DEBUG("%llu bytes in %s\n", statbuf.st_size, data);
+                *cached_byte_count += statbuf.st_size;
+            }
+            else {
+                asprintf(&data, "%s/%s", filename, dirent->d_name);
+                ret = cache_has_file_real(data, cached_byte_count, false /*don't lock*/);
+                if (ret != 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+exit:
+    if (locked)
+        pthread_mutex_unlock(&lock);
+    FREE(mapdir);
+    FREE(data);
+    closedir(dir);
+    return ret;
+}
+
+int cache_has_file(const char *filename, uint64_t *cached_bytes)
+{
+    *cached_bytes = 0;
+    return cache_has_file_real(filename, cached_bytes, true);
+}
+
+int cache_rename(const char *path, const char *path_new)
+{
+    DEBUG("cache_rename %s\n\t%s\n", path, path_new);
+
+    int ret = 0;
+    char *mapdir = NULL;
+    char *mapdir_new = NULL;
+    DIR *dir = NULL;
+    char *parentlink = NULL;
+
+    if (path == NULL || path_new == NULL) {
+        errno = EINVAL;
+        ret = -1;
+        goto exit;
+    }
+
+    // Look up and rename the cache map dir.
+    asprintf(&mapdir, "%s/map%s", cache_dir, path);
+    asprintf(&mapdir_new, "%s/map%s", cache_dir, path_new);
+    ret = rename(mapdir, mapdir_new);
+    if (0 != ret) {
+        if (ENOENT == errno) {
+            DEBUG("not in cache: %s\n", path);
+            ret = 0;
+        }
+        else {
+            PERROR("rename");
+            ret = -EIO;
+        }
+        goto exit;
+    }
+
+    // Next, need to fix all the buckets' parent links.
+    dir = opendir(mapdir_new);
+    if (dir == NULL) {
+        PERROR("opendir");
+        ERROR("\topendir on %s\n", mapdir_new);
+        ret = -EIO;
+        goto exit;
+    }
+
+    size_t cch_parentlink = strlen(mapdir_new) + 20;
+    parentlink = (char*)malloc(cch_parentlink);
+
+    struct dirent *dirent = NULL;
+    while ((dirent = readdir(dir)) != NULL) {
+        if (dirent->d_name[0] != '.' && strcmp(dirent->d_name, "mtime") != 0) {
+            snprintf(parentlink, cch_parentlink, "%s/%s/parent",
+                mapdir_new, dirent->d_name);
+
+            ret = unlink(parentlink);
+            if (0 != ret) {
+                PERROR("unlink");
+                ERROR("\tunlink on %s\n", parentlink);
+                ret = -EIO;
+                goto exit;
+            }
+
+            ret = symlink(mapdir_new, parentlink);
+            if (0 != ret) {
+                PERROR("symlink");
+                ERROR("\tsymlink from %s\n\tto %s\n", parentlink, mapdir_new);
+                ret = -EIO;
+                goto exit;
+            }
+        }
+    }
+
+exit:
+    FREE(mapdir);
+    FREE(mapdir_new);
+    FREE(parentlink);
+    closedir(dir);
+    return ret;
 }
 
 /*

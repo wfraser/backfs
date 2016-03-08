@@ -184,7 +184,7 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
         }
         fsll_dump(base, head, tail);
         // cowardly refusing to break things farther
-        return;
+        goto exit;
     }
 
     if ((n == NULL) ^ (strcmp(t, path) == 0)) {
@@ -194,16 +194,16 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
             ERROR("entry has no next but is not tail: %s\n", path);
         }
         fsll_dump(base, head, tail);
-        return;
+        goto exit;
     }
 
     if ((n != NULL) && strcmp(n, path) == 0) {
         ERROR("entry points to itself as next: %s\n", path);
-        return;
+        goto exit;
     }
     if ((p != NULL) && (strcmp(p, path) == 0)) {
         ERROR("entry points to itself as prev: %s\n", path);
-        return;
+        goto exit;
     }
 
     // there must not be the situation where the list is empty (no head or 
@@ -212,17 +212,17 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     if (h == NULL) {
         ERROR("fsll_to_head, no head found!\n");
         fsll_dump(base, head, tail);
-        return;
+        goto exit;
     }
     if (t == NULL) {
         ERROR("in fsll_to_head, no tail found!\n");
         fsll_dump(base, head, tail);
-        return;
+        goto exit;
     }
 
     if (p == NULL) {
         // already head; do nothing
-        return ;
+        goto exit;
     } else {
         fsll_makelink(p, "next", n);
     }
@@ -240,10 +240,11 @@ void fsll_to_head(const char *base, const char *path, const char *head, const ch
     fsll_makelink(path, "prev", NULL);
     fsll_makelink(base, head, path);
 
-    if (h) free(h);
-    if (t) free(t);
-    if (n) free(n);
-    if (p) free(p);
+exit:
+    FREE(h);
+    FREE(t);
+    FREE(n);
+    FREE(p);
 
     //fsll_dump(base, head, tail);
 }
@@ -295,10 +296,12 @@ void fsll_insert_as_tail(const char *base, const char *path, const char *head,
         fsll_makelink(t, "next", path);
         fsll_makelink(base, tail, path);
     } else {
-        if (h)
+        if (h) {
             ERROR("list has a head but no tail!\n");
-        if (t)
+        }
+        if (t) {
             ERROR("list has a tail but no head!\n");
+        }
     }
 
     if (h) free(h);

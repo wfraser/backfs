@@ -20,6 +20,8 @@
 #include <dirent.h>
 
 #include <sys/statvfs.h>
+#include <sys/stat.h>
+#include <sys/xattr.h>
 
 #include <pthread.h>
 
@@ -36,6 +38,9 @@
 // default cache block size: 128 KiB
 #define BACKFS_DEFAULT_BLOCK_SIZE 0x20000
 
+// Comment this out if you're on an older system that doesn't have this call.
+#define HAVE_UTIMENS
+
 struct backfs { 
     char *cache_dir;
     char *real_root;
@@ -49,7 +54,31 @@ static struct backfs backfs = {0};
 int backfs_log_level;
 bool backfs_log_stderr = false;
 
-#define FREE(var) { free(var); var = NULL; }
+#define FORWARD(func, ...) \
+    do { \
+        ret = func(__VA_ARGS__); \
+        if (ret == -1) { \
+            PERROR(#func); \
+            ret = -errno; \
+            goto exit; \
+        } \
+    } while (0)
+
+#define RW_ONLY() \
+    do { \
+        if (!backfs.rw) { \
+            ret = -EROFS; \
+            goto exit; \
+        } \
+    } while (0)
+
+#define REALPATH(real, path) \
+    do { \
+        if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
+            ret = -ENOMEM; \
+            goto exit; \
+        } \
+    } while (0)
 
 void usage()
 {
@@ -75,16 +104,10 @@ void usage()
     );
 }
 
-#define REALPATH(real, path) \
-    do { \
-        if (-1 == asprintf(&real, "%s%s", backfs.real_root, path)) { \
-            ret = -ENOMEM; \
-            goto exit; \
-        } \
-    } while (0)
+const char BACKFS_CONTROL_FILE[] = "/.backfs_control";
+const char BACKFS_VERSION_FILE[] = "/.backfs_version";
 
-int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
-        struct fuse_file_info *fi)
+int backfs_control_file_write(const char *buf, size_t len)
 {
     char *data = (char*)malloc(len+1);
     memcpy(data, buf, len);
@@ -102,7 +125,7 @@ int backfs_control_file_write(const char *path, const char *buf, size_t len, off
     if (*data == ' ' || *data == '\n')
         data++;
 
-    DEBUG("BackFS: command(%s) data(%s)\n", command, data);
+    DEBUG("backfs_control: command(%s) data(%s)\n", command, data);
 
     if (strcmp(command, "test") == 0) {
         // nonsensical error "Cross-device link"
@@ -124,36 +147,69 @@ int backfs_control_file_write(const char *path, const char *buf, size_t len, off
     return len;
 }
 
-int backfs_open(const char *path, struct fuse_file_info *fi)
+int backfs_access(const char *path, int mode)
 {
-    DEBUG("BackFS: open %s\n", path);
+    char modestr[4] = {0};
+    size_t modestr_pos = 0;
+
+    int checkmode = 0;
+    if (mode & F_OK) {
+        modestr[0] = 'f';
+    }
+    else {
+        if (mode & R_OK) {
+            modestr[modestr_pos++] = 'r';
+            checkmode |= 4;
+        }
+        if (mode & W_OK) {
+            modestr[modestr_pos++] = 'w';
+            checkmode |= 2;
+        }
+        if (mode & X_OK) {
+            modestr[modestr_pos++] = 'x';
+            checkmode |= 1;
+        }
+    }
+    DEBUG("access (%s) %s\n", modestr, path);
+
     int ret = 0;
     char *real = NULL;
-
-    if (strcmp("/.backfs_control", path) == 0) {
-        if ((fi->flags & 3) != O_WRONLY)
-            ret = -EACCES;
-        goto exit;
-    }
-
-    if (strcmp("/.backfs_version", path) == 0) {
-        if ((fi->flags & 3) != O_RDONLY)
-            ret = -EACCES;
-        goto exit;
-    }
 
     REALPATH(real, path);
     struct stat stbuf;
     ret = lstat(real, &stbuf);
-    FREE(real);
     if (ret == -1) {
         ret = -errno;
         goto exit;
     }
 
-    if (!backfs.rw && (fi->flags & 3) != O_RDONLY) {
-        ret = -EACCES;
-        goto exit;
+    DEBUG("checkmode: 0%o\n", checkmode);
+
+    if (checkmode > 0) {
+        if (!backfs.rw && (mode & W_OK)) {
+            ret = -EACCES;
+            goto exit;
+        }
+
+        DEBUG("fullmode: 0%o\n", stbuf.st_mode);
+
+        struct fuse_context *ctx = fuse_get_context();
+
+        int shift = 0;
+        if (ctx->uid == stbuf.st_uid) {
+            shift = 6;
+        }
+        else if (ctx->gid == stbuf.st_gid) {
+            shift = 3;
+        }
+        int mode = (stbuf.st_mode & (0x7 << shift)) >> shift;
+
+        DEBUG("mode: 0%o\n", mode);
+
+        if ((mode & checkmode) != checkmode) {
+            ret = -EACCES;
+            goto exit;
+        }
     }
 
 exit:
@@ -161,19 +217,138 @@ exit:
     return ret;
 }
 
-int backfs_write(const char *path, const char *buf, size_t len, off_t offset,
+int backfs_open(const char *path, struct fuse_file_info *fi)
+{
+    DEBUG("open %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    if (strcmp(BACKFS_CONTROL_FILE, path) == 0) {
+        if ((fi->flags & 3) != O_WRONLY)
+            ret = -EACCES;
+        goto exit;
+    }
+
+    if (strcmp(BACKFS_VERSION_FILE, path) == 0) {
+        if ((fi->flags & 3) != O_RDONLY)
+            ret = -EACCES;
+        goto exit;
+    }
+
+    REALPATH(real, path);
+    int fd = open(real, fi->flags);
+    if (fd == -1) {
+        PERROR("open");
+        ret = -errno;
+        goto exit;
+    }
+    
+    fi->fh = fd;
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_write(const char *path, const char *buf, size_t size, off_t offset,
         struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/.backfs_control") == 0) {
-        return backfs_control_file_write(path, buf, len, offset, fi);
+    DEBUG("write %s %lx %lx\n", path, size, offset);
+
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
+        return backfs_control_file_write(buf, size);
+    }
+    else if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
+        return -EACCES;
     }
 
     if (!backfs.rw) {
         return -EACCES;
     }
 
-    //TODO
-    return -EIO;
+    int ret = 0;
+    bool locked = false;
+    bool first = true;
+    
+    int bytes_written = 0;
+    uint32_t first_block = offset / backfs.block_size;
+    uint32_t last_block = (offset+size) / backfs.block_size;
+    uint32_t block;
+    off_t buf_offset = 0;
+    for (block = first_block; block <= last_block; block++) {
+        size_t block_size;
+
+        if (block == first_block)
+            block_size = ((block + 1) * backfs.block_size) - offset;
+        else if (block == last_block)
+            block_size = size - buf_offset;
+        else
+            block_size = backfs.block_size;
+
+        if (block_size > size)
+            block_size = size;
+        if (block_size == 0)
+            continue;
+
+        pthread_mutex_lock(&backfs.lock);
+        locked = true;
+
+        if (first) {
+            DEBUG("writing to 0x%lx to 0x%lx, block size is 0x%lx\n",
+                (unsigned long)offset,
+                (unsigned long)offset+size,
+                (unsigned long)backfs.block_size);
+            first = false;
+        }
+        
+        DEBUG("writing block %lu, 0x%lx to 0x%lx\n",
+            (unsigned long)block,
+            (unsigned long)offset + buf_offset,
+            (unsigned long)offset + buf_offset + block_size);
+
+        ssize_t nwritten = pwrite((int)fi->fh, buf + buf_offset, block_size, offset + buf_offset);
+
+        bytes_written += nwritten;
+        DEBUG("bytes_written=%lu\n",(unsigned long)bytes_written);
+        if (nwritten < block_size) {
+            DEBUG("wrote less than requested, %lu instead of %lu\n",
+                (unsigned long)nwritten,
+                (unsigned long)block_size);
+            ret = bytes_written;
+            goto exit;
+        }
+        
+        if (block_size == backfs.block_size) {
+            // a full block, save it to the cache
+            for (int loop = 0; loop < 5; loop++) {
+                if (0 == cache_add(
+                            path,
+                            block,
+                            buf + buf_offset,
+                            nwritten,
+                            time(NULL))
+                        || errno != EAGAIN) {
+                    break;
+                }
+                DEBUG("cache retry #%d\n", loop+1);
+            }
+        }
+        else {
+            cache_try_invalidate_block(path, block);
+        }
+
+        pthread_mutex_unlock(&backfs.lock);
+        locked = false;
+
+        buf_offset += block_size;
+    }
+
+    ret = bytes_written;
+
+exit:
+    if (locked)
+        pthread_mutex_unlock(&backfs.lock);
+    return ret;
 }
 
 int backfs_readlink(const char *path, char *buf, size_t bufsize)
@@ -197,11 +372,11 @@ exit:
 
 int backfs_getattr(const char *path, struct stat *stbuf)
 {
-    DEBUG("BackFS: getattr %s\n", path);
+    DEBUG("getattr %s\n", path);
     int ret = 0;
     char *real = NULL;
 
-    if (strcmp(path, "/.backfs_control") == 0) {
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFREG | 0200;
         stbuf->st_nlink = 1;
@@ -214,7 +389,7 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         goto exit;
     }
 
-    if (strcmp(path, "/.backfs_version") == 0) {
+    if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFREG | 0444;
         stbuf->st_nlink = 1;
@@ -230,13 +405,15 @@ int backfs_getattr(const char *path, struct stat *stbuf)
     REALPATH(real, path);
     ret = lstat(real, stbuf);
     
-    // no write or exec perms
-    stbuf->st_mode &= ~0333;
+    // no write perms
+    if (!backfs.rw) {
+        stbuf->st_mode &= ~0222;
+    }
 
     if (ret == -1) {
         ret = -errno;
     } else {
-        DEBUG("BackFS: mode: %o\n", stbuf->st_mode);
+        DEBUG("mode: 0%o\n", stbuf->st_mode);
         ret = 0;
     }
 
@@ -253,7 +430,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
     char *block_buf = NULL;
     char *real = NULL;
 
-    if (strcmp(path, "/.backfs_version") == 0) {
+    if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         char *ver = BACKFS_VERSION;
         size_t len = strlen(ver);
 
@@ -342,12 +519,7 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
             DEBUG("reading block %lu from real file: %s\n",
                     (unsigned long) block, real);
-            int fd = open(real, O_RDONLY);
-            if (fd == -1) {
-                PERROR("error opening real file");
-                ret = -EIO;
-                goto exit;
-            }
+            int fd = (int)fi->fh;
             
             // read the entire block
             block_buf = (char*)malloc(backfs.block_size);
@@ -355,17 +527,28 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                     backfs.block_size * block);
             if (nread == -1) {
                 PERROR("read error on real file");
-                close(fd);
                 ret = -EIO;
                 goto exit;
             } else {
-                close(fd);
                 DEBUG("got %lu bytes from real file\n", (unsigned long) nread);
                 DEBUG("adding to cache\n");
-                cache_add(path, block, block_buf, nread, real_stat.st_mtime);
+                
+                for (int loop = 0; loop < 5; loop++) {
+                    if (0 == cache_add(
+                                path,
+                                block,
+                                block_buf,
+                                nread,
+                                real_stat.st_mtime)
+                            || errno != EAGAIN) {
+                        break;
+                    }
+                    DEBUG("cache retry #%d\n", loop+1);
+                }
 
                 memcpy(rbuf+buf_offset, block_buf+block_offset, 
                         ((nread < block_size) ? nread : block_size));
+                FREE(block_buf);
 
                 if (nread < block_size) {
                     DEBUG("read less than requested, %lu instead of %lu\n", 
@@ -394,17 +577,21 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
                 goto exit;
             }
         }
+
+        pthread_mutex_unlock(&backfs.lock);
+        locked = false;
+
         buf_offset += block_size;
     }
 
     ret = bytes_read;
 
 exit:
+    FREE(real);
+    FREE(block_buf);
     if (locked) {
         pthread_mutex_unlock(&backfs.lock);
     }
-    FREE(real);
-    FREE(block_buf);
     return ret;
 }
 
@@ -423,10 +610,26 @@ int backfs_opendir(const char *path, struct fuse_file_info *fi)
         goto exit;
     }
 
-    fi->fh = (uint64_t)(long)dir;
+    fi->fh = (uint64_t)(intptr_t)dir;
 
 exit:
     FREE(real);
+    return ret;
+}
+
+int backfs_releasedir(const char *path, struct fuse_file_info *fi)
+{
+    DEBUG("releasedir %s\n", path);
+    int ret = 0;
+
+    if (fi->fh != 0) {
+        DEBUG("releasedir closing directory");
+        DIR *dir = (DIR*)(intptr_t)(fi->fh);
+        fi->fh = 0;
+        FORWARD(closedir, dir);
+    }
+
+exit:
     return ret;
 }
 
@@ -434,10 +637,14 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
     DEBUG("readdir %s\n", path);
+
+    if (offset != 0) {
+        return EINVAL;
+    }
+
     int ret = 0;
     char *real = NULL;
-
-    DIR *dir = (DIR*)(long)(fi->fh);
+    DIR *dir = (DIR*)(intptr_t)(fi->fh);
 
     if (dir == NULL) {
         ERROR("got null dir handle");
@@ -465,31 +672,513 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     }
     free(entry);
 
-    closedir(dir);
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_truncate(const char *path, off_t length)
+{
+    DEBUG("truncate %s, %u\n", path, length);
+
+    if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
+        // Probably due to user doing 'echo foo > .backfs_control' instead of using '>>'.
+        // Ignore it.
+        return 0;
+    }
+
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(truncate, real, length);
+
+    uint32_t block = length / backfs.block_size;
+    cache_try_invalidate_blocks_above(path, block);
 
 exit:
     FREE(real);
-    return 0;
+    return ret;
 }
 
-int backfs_access(const char *path, int mode)
+int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
 {
-    if (mode & W_OK) {
-        return -EACCES;
+    DEBUG("create (mode 0%o) %s\n", mode, path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+
+    ret = open(real, info->flags | O_CREAT | O_EXCL); // not sure on the read/write mode here...
+    if (ret == -1) {
+        PERROR("error opening real file for create");
+        ret = -errno;
+        goto exit;
+    }
+    info->fh = ret;
+
+    FORWARD(chmod, real, mode);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_unlink(const char *path)
+{
+    DEBUG("unlink %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(unlink, real);
+
+    if (0 == cache_try_invalidate_file(path)) {
+        DEBUG("unlink: invalidated cache for the file\n");
+    }
+    // ignore its return value; don't care if it fails.
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_release(const char *path, struct fuse_file_info *info)
+{
+    DEBUG("release: %s\n", path);
+
+    if (info->fh != 0) {
+        // If we saved a file handle here from 
+        DEBUG("closing saved file handle\n");
+        close((int)info->fh);
     }
 
+    // FUSE ignores the return value here.
     return 0;
 }
 
+int backfs_mkdir(const char *path, mode_t mode)
+{
+    DEBUG("mkdir (mode 0%o) %s\n", mode, path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(mkdir, real, mode);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_rmdir(const char *path)
+{
+    DEBUG("rmdir %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(rmdir, real);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_symlink(const char *target, const char *path)
+{
+    DEBUG("symlink %s -> %s\n", target, path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(symlink, target, real);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+// These two functions work in exactly the same way.
+#define BACKFS_RENAME_OR_LINK(rename_or_link, id) \
+int backfs_##rename_or_link(const char *path, const char *path_new) \
+{ \
+    DEBUG(#rename_or_link " %s -> %s\n", path, path_new); \
+    int ret = 0; \
+    char *real = NULL; \
+    char *real_new = NULL; \
+    bool locked = false; \
+    \
+    RW_ONLY(); \
+    \
+    REALPATH(real, path); \
+    REALPATH(real_new, path_new); \
+    \
+    if (id == 0) \
+        locked = true; \
+        pthread_mutex_lock(&backfs.lock); \
+    \
+    FORWARD(rename_or_link, real, real_new); \
+    \
+    if (id == 0) { \
+        int cache_ret = cache_rename(path, path_new); \
+        if (cache_ret != 0) { \
+            FORWARD(rename, real_new, real); \
+            ret = cache_ret; \
+        } \
+    } \
+\
+exit: \
+    if (id == 0 && locked) \
+        pthread_mutex_unlock(&backfs.lock); \
+    FREE(real); \
+    FREE(real_new);\
+    return ret; \
+}
+
+BACKFS_RENAME_OR_LINK(rename, 0)
+BACKFS_RENAME_OR_LINK(link, 1)
+
+int backfs_chmod(const char *path, mode_t mode)
+{
+    DEBUG("chmod %s 0%o\n", path, mode);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(chmod, real, mode);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_chown(const char *path, uid_t uid, gid_t gid)
+{
+    DEBUG("chown %s %d:%d\n", path, uid, gid);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(chown, real, uid, gid);
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+#ifdef HAVE_UTIMENS
+int backfs_utimens(const char *path, const struct timespec tv[2])
+{
+    DEBUG("utimens %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+    REALPATH(real, path);
+    FORWARD(utimensat, 0, real, tv, 0);
+
+exit:
+    FREE(real);
+    return ret;
+}
+#endif
+
+//
+// Support for custom attributes
+//
+
+enum
+{
+    ATTRIBUTE_INVALID_ACTION,
+    ATTRIBUTE_READ,
+    ATTRIBUTE_WRITE,
+    ATTRIBUTE_WRITE_REPLACE,
+    ATTRIBUTE_CREATE,
+    ATTRIBUTE_REMOVE,
+};
+
+struct backfs_attribute_handler
+{
+    const char *attribute_name;
+    int (*handler_fn)(const char *path, const char *name, char *value, size_t size,
+                            int action);
+};
+
+#define BACKFS_ATTRIBUTE_HANDLER(attribute_name) \
+int backfs_##attribute_name##_handler( \
+    const char *path, \
+    const char *name, \
+    char *value, \
+    size_t size, \
+    int action \
+    )
+
+BACKFS_ATTRIBUTE_HANDLER(in_cache)
+{
+    (void)name;
+
+    int ret = 0;
+    char *out = NULL;
+
+    if (action != ATTRIBUTE_READ) {
+        ret = -EACCES;
+        goto exit;
+    }
+
+    uint64_t cached_bytes = 0;
+    ret = cache_has_file(path, &cached_bytes);
+    if (ret != 0) {
+        goto exit;
+    }
+
+    int required_space = asprintf(&out, "%llu", cached_bytes);
+
+    if (size == 0) {
+        ret = required_space;
+    }
+    else if (size < required_space) {
+        ret = -ERANGE;
+    }
+    else {
+        memcpy(value, out, required_space);
+        ret = required_space;
+    }
+
+exit:
+    FREE(out);
+    return ret;
+}
+
+const struct backfs_attribute_handler backfs_attributes[] = {
+    { "user.backfs.in_cache", &backfs_in_cache_handler }
+};
+
+int backfs_handle_attribute(const char *path, const char *name, char *value, size_t size,
+                            int action)
+{
+    int ret = -ENOTSUP;
+    bool handled = false;
+
+    for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+        if (strcmp(backfs_attributes[i].attribute_name, name) == 0) {
+            ret = backfs_attributes[i].handler_fn(path, name, value, size, action);
+            handled = true;
+            break;
+        }
+    }
+
+    const char prefix[] = "user.backfs.";
+    if (!handled && strncmp(name, prefix, COUNTOF(prefix) - 1) == 0) {
+        switch (action) {
+        case ATTRIBUTE_READ:
+        case ATTRIBUTE_REMOVE:
+            ret = -ENODATA; // should be ENOATTR but this isn't as widely available
+            break;
+        case ATTRIBUTE_WRITE:
+        case ATTRIBUTE_WRITE_REPLACE:
+        case ATTRIBUTE_CREATE:
+            ret = -EACCES;
+            break;
+        default:
+            ret = -EINVAL;
+        }
+    }
+
+    return ret;
+}
+
+int backfs_getxattr(const char *path, const char *name, char *value, size_t size)
+{
+    DEBUG("getxattr %s %s %d\n", path, name, size);
+    int ret = 0;
+    char *real = NULL;
+
+    ret = backfs_handle_attribute(path, name, value, size, ATTRIBUTE_READ);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(getxattr, real, name, value, size);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_setxattr(const char *path, const char *name, const char *value, size_t size,
+                    int flags)
+{
+    DEBUG("setxattr %s %s\n", path, name);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+
+    int action;
+    if (flags == XATTR_CREATE)
+        action = ATTRIBUTE_CREATE;
+    else if (flags == XATTR_REPLACE)
+        action = ATTRIBUTE_WRITE_REPLACE;
+    else 
+        action = ATTRIBUTE_WRITE;
+
+    ret = backfs_handle_attribute(path, name, (char*)value, size, action);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(setxattr, real, name, value, size, flags);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_removexattr(const char *path, const char *name)
+{
+    DEBUG("removexattr %s %s\n", path, name);
+    int ret = 0;
+    char *real = NULL;
+
+    RW_ONLY();
+
+    ret = backfs_handle_attribute(path, name, NULL, 0, ATTRIBUTE_REMOVE);
+
+    if (ret == -ENOTSUP) {
+        REALPATH(real, path);
+        FORWARD(removexattr, real, name);
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+int backfs_listxattr(const char *path, char *list, size_t size)
+{
+    DEBUG("listxattr %s\n", path);
+    int ret = 0;
+    char *real = NULL;
+
+    REALPATH(real, path);
+
+    if (size == 0) {
+        ret = listxattr(real, NULL, 0);
+        
+        for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+            ret += strlen(backfs_attributes[i].attribute_name) + 1;
+        }
+    }
+    else {
+        for (size_t i = 0; i < COUNTOF(backfs_attributes); i++) {
+            size_t name_len = strlen(backfs_attributes[i].attribute_name) + 1;
+            if (name_len > size) {
+                ret = ERANGE;
+                goto exit;
+            }
+
+            memcpy(list, backfs_attributes[i].attribute_name, name_len);
+            size -= name_len;
+            list += name_len;
+            ret += name_len;
+        }
+
+        ssize_t listsize = listxattr(real, list, size);
+        DEBUG("forwarded: %d\n", listsize);
+        if (listsize < 0) {
+            goto exit;
+        }
+        else {
+            ret += listsize;
+        }
+    }
+
+exit:
+    FREE(real);
+    return ret;
+}
+
+#ifdef STUB_FUNCTIONS
+//
+// Stubs for the remaining syscalls
+//
+
+#define STUB(func, ...) \
+int backfs_##func(const char *path, __VA_ARGS__) \
+{ \
+    DEBUG(#func ": %s\n", path); \
+    return -ENOSYS; \
+}
+
+STUB(statfs, struct statvfs *stat)
+STUB(flush, struct fuse_file_info *ffi)
+STUB(fsync, int n, struct fuse_file_info *ffi)
+STUB(fsyncdir, int a, struct fuse_file_info *ffi)
+STUB(lock, struct fuse_file_info *ffi, int cmd, struct flock *flock)
+STUB(bmap, size_t blocksize, uint64_t *idx)
+STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, void *data)
+STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
+STUB(flock, struct fuse_file_info *ffi, int op)
+STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+#endif
+
+#define IMPL(func) .func = backfs_##func
+
 static struct fuse_operations BackFS_Opers = {
-    .open       = backfs_open,
-    .read       = backfs_read,
-    .opendir    = backfs_opendir,
-    .readdir    = backfs_readdir,
-    .getattr    = backfs_getattr,
-    .access     = backfs_access,
-    .write      = backfs_write,
-    .readlink   = backfs_readlink
+#ifdef BACKFS_RW
+    IMPL(mkdir),
+    IMPL(unlink),
+    IMPL(rmdir),
+    IMPL(symlink),
+    IMPL(rename),
+    IMPL(link),
+    IMPL(chmod),
+    IMPL(chown),
+    IMPL(setxattr),
+    IMPL(removexattr),
+    IMPL(create),
+#ifdef HAVE_UTIMENS
+    IMPL(utimens),
+#endif
+#ifdef STUB_FUNCTIONS
+    IMPL(fsyncdir),
+    IMPL(statfs),
+    IMPL(flush),
+    IMPL(fsync),
+    IMPL(lock),
+    IMPL(bmap),
+    IMPL(ioctl),
+    IMPL(poll),
+    IMPL(flock),
+//    IMPL(fallocate),  // pretty new; a lot of FUSE installs don't have this yet.
+#endif
+#endif
+    IMPL(open),
+    IMPL(read),
+    IMPL(opendir),
+    IMPL(readdir),
+    IMPL(releasedir),
+    IMPL(getattr),
+    IMPL(access),
+    IMPL(write),
+    IMPL(readlink),
+    IMPL(truncate),
+    IMPL(release),
+    IMPL(getxattr),
+    IMPL(listxattr),
+//  IMPL(ftruncate)     // redundant, use truncate instead
+//  IMPL(fgetattr),     // redundant, use getattr instead
+//  IMPL(read_buf),     // use read instead
+//  IMPL(write_buf),    // use write instead
 };
 
 enum {
@@ -531,6 +1220,8 @@ char* nonopt_arguments[2] = {NULL, NULL};
 int backfs_opt_proc(void *data, const char *arg, int key, 
         struct fuse_args *outargs)
 {
+    (void)data;
+
     switch (key) {
     case FUSE_OPT_KEY_OPT:
         // Unknown option-argument. Pass it along to FUSE I guess?
@@ -561,6 +1252,8 @@ int backfs_opt_proc(void *data, const char *arg, int key,
                "#                                  #\n"
                "####################################\n");
         backfs.rw = true;
+        // Turn on big_writes so we get writes > 4K in size. Helps cache.
+        fuse_opt_add_opt(outargs->argv, "big_writes");
         return FUSE_OPT_DISCARD;
 #else
         fprintf(stderr, "BackFS: mounting r/w is not supported in this build.\n");
