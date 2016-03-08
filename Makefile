@@ -1,6 +1,6 @@
 PREFIX=/usr/local
 
-VERSION=BackFS v0.4pre\
+VERSION=BackFS v0.4\
 $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai" -n1)\
 \nbuilt $(shell date "+%Y-%m-%d %H:%M:%S %z")\n
 
