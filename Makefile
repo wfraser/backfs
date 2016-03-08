@@ -16,8 +16,11 @@ ifeq ($(BRANCH),rw)
 	DEFINES+= -DBACKFS_RW
 endif
 
-CFLAGS=-std=c1x -pedantic -g3 $(DEFINES) -I/usr/include/fuse
+CFLAGS=-std=c11 -Wall -Wextra -pedantic -gstabs $(DEFINES) -I/usr/include/fuse
 LDFLAGS=-lfuse
+
+CFLAGS+= -Wno-format		# we use the Gnu '%m' format all over the place
+CFLAGS+= -Wno-sign-compare	# these should get fixed eventually, but there are a lot...
 
 CC = gcc
 

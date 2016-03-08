@@ -402,8 +402,9 @@ int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
     DIR *d = opendir(mappath);
     if (d == NULL) {
-        if (errno != ENOENT || error_if_not_exist)
+        if (errno != ENOENT || error_if_not_exist) {
             PERROR("opendir in cache_invalidate");
+        }
         return -errno;
     }
 
@@ -447,12 +448,12 @@ int cache_invalidate_file_(const char *filename, bool error_if_not_exist)
 
 int cache_invalidate_file(const char *filename)
 {
-    cache_invalidate_file_(filename, true);
+    return cache_invalidate_file_(filename, true);
 }
 
 int cache_try_invalidate_file(const char *filename)
 {
-    cache_invalidate_file_(filename, false);
+    return cache_invalidate_file_(filename, false);
 }
 
 int cache_invalidate_block_(const char *filename, uint32_t block,

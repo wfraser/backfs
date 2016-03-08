@@ -107,8 +107,7 @@ void usage()
 const char BACKFS_CONTROL_FILE[] = "/.backfs_control";
 const char BACKFS_VERSION_FILE[] = "/.backfs_version";
 
-int backfs_control_file_write(const char *path, const char *buf, size_t len, off_t offset,
-        struct fuse_file_info *fi)
+int backfs_control_file_write(const char *buf, size_t len)
 {
     char *data = (char*)malloc(len+1);
     memcpy(data, buf, len);
@@ -257,7 +256,7 @@ int backfs_write(const char *path, const char *buf, size_t size, off_t offset,
     DEBUG("write %s %lx %lx\n", path, size, offset);
 
     if (strcmp(path, BACKFS_CONTROL_FILE) == 0) {
-        return backfs_control_file_write(path, buf, size, offset, fi);
+        return backfs_control_file_write(buf, size);
     }
     else if (strcmp(path, BACKFS_VERSION_FILE) == 0) {
         return -EACCES;
@@ -638,6 +637,11 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         off_t offset, struct fuse_file_info *fi)
 {
     DEBUG("readdir %s\n", path);
+
+    if (offset != 0) {
+        return EINVAL;
+    }
+
     int ret = 0;
     char *real = NULL;
 
@@ -671,7 +675,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 exit:
     FREE(real);
-    return 0;
+    return ret;
 }
 
 int backfs_truncate(const char *path, off_t length)
@@ -921,6 +925,8 @@ int backfs_##attribute_name##_handler( \
 
 BACKFS_ATTRIBUTE_HANDLER(in_cache)
 {
+    (void)name;
+
     int ret = 0;
     char *out = NULL;
 
@@ -988,7 +994,6 @@ int backfs_handle_attribute(const char *path, const char *name, char *value, siz
         }
     }
 
-exit:
     return ret;
 }
 
@@ -1216,6 +1221,8 @@ char* nonopt_arguments[2] = {NULL, NULL};
 int backfs_opt_proc(void *data, const char *arg, int key, 
         struct fuse_args *outargs)
 {
+    (void)data;
+
     switch (key) {
     case FUSE_OPT_KEY_OPT:
         // Unknown option-argument. Pass it along to FUSE I guess?

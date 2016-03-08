@@ -296,10 +296,12 @@ void fsll_insert_as_tail(const char *base, const char *path, const char *head,
         fsll_makelink(t, "next", path);
         fsll_makelink(base, tail, path);
     } else {
-        if (h)
+        if (h) {
             ERROR("list has a head but no tail!\n");
-        if (t)
+        }
+        if (t) {
             ERROR("list has a tail but no head!\n");
+        }
     }
 
     if (h) free(h);
