@@ -987,7 +987,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
             (unsigned long long) bytes_written);
 
     bool unchecked = is_unchecked(bucketpath);
-    if (unchecked) {
+    if (!unchecked) {
       cache_used_size += bytes_written;
     }
 
@@ -1019,7 +1019,7 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
             (unsigned long long) more_bytes_written,
             (unsigned long long) more_bytes_written + bytes_written);
 
-        if (unchecked) {
+        if (!unchecked) {
           cache_used_size += more_bytes_written;
         }
         bytes_written += more_bytes_written;
