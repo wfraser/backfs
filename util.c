@@ -31,7 +31,8 @@ size_t max_filename_length(const char* path)
         PERROR("statfs in max_filename_length failed");
         return 255; // Seems to be a safe default.
     }
-    return (size_t)sfs.f_namelen;
+    size_t len = (size_t)sfs.f_namelen;
+    return len < 255 ? 255 : len;
 }
 
 /*

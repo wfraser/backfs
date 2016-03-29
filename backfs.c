@@ -358,12 +358,13 @@ int backfs_readlink(const char *path, char *buf, size_t bufsize)
 
     REALPATH(real, path);
 
-    ssize_t bytes_written = readlink(real, buf, bufsize);
+    ssize_t bytes_written = readlink(real, buf, bufsize-1);
     if (bytes_written == -1)
     {
         ret = -errno;
         goto exit;
     }
+    buf[bufsize] = '\0';
 
 exit:
     FREE(real);
@@ -475,7 +476,11 @@ int backfs_read(const char *path, char *rbuf, size_t size, off_t offset,
 
         // in case another thread is reading a full block as a result of a 
         // cache miss
-        pthread_mutex_lock(&backfs.lock);
+        ret = pthread_mutex_lock(&backfs.lock);
+        if (ret) {
+            DEBUG("Error locking mutex: %d!", ret);
+            goto exit;
+        }
         locked = true;
 
         if (first) {
@@ -1471,6 +1476,9 @@ int main(int argc, char **argv)
     printf("initializing cache and scanning existing cache dir...\n");
     cache_init(backfs.cache_dir, backfs.cache_size, backfs.block_size);
 
+    // Initializing mutex
+    pthread_mutex_init(&backfs.lock, NULL);
+    
     printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
 

@@ -37,41 +37,99 @@ extern bool backfs_log_stderr;
 
 static char *cache_dir;
 static uint64_t cache_size;
-static uint64_t cache_used_size;
+static volatile uint64_t cache_used_size = 0;
+struct bucket_node { uint32_t number; struct bucket_node* next; };
+static struct bucket_node * volatile to_check;
 static bool use_whole_device;
 static uint64_t bucket_max_size;
 
-uint64_t get_cache_used_size(const char *root)
+uint64_t cache_number_of_buckets(const char *root)
 {
     INFO("taking inventory of cache directory\n");
     uint64_t total = 0;
     struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
     struct dirent *result = e;
-    struct stat s;
-    char buf[PATH_MAX];
     DIR *dir = opendir(root);
+    struct bucket_node* volatile * next = &to_check;
     while (readdir_r(dir, e, &result) == 0 && result != NULL) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        snprintf(buf, PATH_MAX, "%s/%s/data", root, e->d_name);
-        s.st_size = 0;
-        if (stat(buf, &s) == -1 && errno != ENOENT) {
-            PERROR("stat in get_cache_used_size");
-            ERROR("\tcaused by stat(%s)\n", buf);
-            abort();
-        }
-        DEBUG("bucket %s: %llu bytes\n",
-                e->d_name, (unsigned long long) s.st_size);
-        total += s.st_size;
+        *next = (struct bucket_node*)malloc(sizeof(struct bucket_node));
+        (*next)->number = atoi(e->d_name);
+        next = &((*next)->next);
+        *next = NULL;
+        ++total;
     }
-    if (result != NULL) {
-        PERROR("readdir in get_cache_used_size");
-        abort();
-    }
-
     closedir(dir);
     FREE(e);
 
     return total;
+}
+
+/*
+ * returns the bucket number corresponding to a bucket path
+ * i.e. reads the number off the end.
+ */
+uint32_t bucket_path_to_number(const char *bucketpath)
+{
+    uint32_t number = 0;
+    size_t s = strlen(bucketpath);
+    size_t i;
+    for (i = 1; i < s; i++) {
+        char c = bucketpath[s - i];
+        if (c < '0' || c > '9') {
+            i--;
+            break;
+        }
+    }
+    for (i = s - i; i < s; i++) {
+        number *= 10;
+        number += (bucketpath[i] - '0');
+    }
+    return number;
+}
+
+bool is_unchecked(const char* path)
+{
+  uint32_t number = bucket_path_to_number(path);
+  struct bucket_node* node = to_check;
+  while(node) {
+    if (node->number == number)
+      return true;
+    node = node->next;
+  }
+  return false;
+}
+
+void* check_buckets_size(void* arg)
+{
+  struct stat s;
+  struct bucket_node* bucket;
+  if (arg != NULL) {
+    abort();
+  }
+
+  char buf[PATH_MAX];
+
+  while (to_check) {
+    pthread_mutex_lock(&lock);
+    bucket = to_check;
+    if (bucket) {
+      s.st_size = 0;
+      snprintf(buf, PATH_MAX, "%s/buckets/%u/data", cache_dir, bucket->number);
+      if (stat(buf, &s) == -1 && errno != ENOENT) {
+           PERROR("stat in get_cache_used_size");
+           ERROR("\tcaused by stat(%s)\n", buf);
+           abort();
+       }
+       DEBUG("bucket %u: %llu bytes\n",
+               bucket->number, (unsigned long long) s.st_size);
+       cache_used_size -= bucket_max_size - s.st_size;
+       to_check = bucket->next;
+    }
+    pthread_mutex_unlock(&lock);
+    free(bucket);
+  }
+  return NULL;
 }
 
 uint64_t get_cache_fs_free_size(const char *root)
@@ -98,15 +156,23 @@ void cache_init(const char *a_cache_dir, uint64_t a_cache_size, uint64_t a_bucke
 
     char bucket_dir[PATH_MAX];
     snprintf(bucket_dir, PATH_MAX, "%s/buckets", cache_dir);
-    cache_used_size = get_cache_used_size(bucket_dir);
-    INFO("%llu bytes used in cache dir\n",
+    uint64_t number_of_buckets = cache_number_of_buckets(bucket_dir);
+    INFO("%llu buckets used in cache dir\n",
+            (unsigned long long) number_of_buckets);
+    cache_used_size = number_of_buckets * a_bucket_max_size;
+    INFO("Estimated %llu bytes used in cache dir\n",
             (unsigned long long) cache_used_size);
-
     uint64_t cache_free_size = get_cache_fs_free_size(bucket_dir);
     INFO("%llu bytes free in cache dir\n",
             (unsigned long long) cache_free_size);
 
     bucket_max_size = a_bucket_max_size;
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, &check_buckets_size, NULL) != 0) {
+      PERROR("cache_init: error creating checked thread");
+      abort();
+    }
 }
 
 const char * bucketname(const char *path)
@@ -209,29 +275,6 @@ void bucket_to_head(const char *bucketpath)
 {
     DEBUG("bucket_to_head(%s)\n", bucketpath);
     fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
-}
-
-/*
- * returns the bucket number corresponding to a bucket path
- * i.e. reads the number off the end.
- */
-uint32_t bucket_path_to_number(const char *bucketpath)
-{
-    uint32_t number = 0;
-    size_t s = strlen(bucketpath);
-    size_t i;
-    for (i = 1; i < s; i++) {
-        char c = bucketpath[s - i];
-        if (c < '0' || c > '9') {
-            i--;
-            break;
-        }
-    }
-    for (i = s - i; i < s; i++) {
-        number *= 10;
-        number += (bucketpath[i] - '0');
-    }
-    return number;
 }
 
 /*
@@ -359,13 +402,18 @@ uint64_t free_bucket_real(const char *bucketpath, bool free_in_the_middle_is_bad
         PERROR("stat data in free_bucket");
     }
 
+    pthread_mutex_lock(&lock);
+    uint64_t result = 0;
     if (unlink(data) == -1) {
         PERROR("unlink data in free_bucket");
-        return 0;
     } else {
-        cache_used_size -= (uint64_t) s.st_size;
-        return (uint64_t) s.st_size;
+      result = (uint64_t) s.st_size;
+      if (!is_unchecked(bucketpath)) {
+        cache_used_size -= result;
+      }
     }
+    pthread_mutex_unlock(&lock);
+    return result;
 }
 
 uint64_t free_bucket_mid_queue(const char *bucketpath)
@@ -942,7 +990,10 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
     DEBUG("%llu bytes written to cache\n",
             (unsigned long long) bytes_written);
 
-    cache_used_size += bytes_written;
+    bool unchecked = is_unchecked(bucketpath);
+    if (!unchecked) {
+      cache_used_size += bytes_written;
+    }
 
     // for some reason (filesystem metadata overhead?) this may need to loop a
     // few times to write everything out.
@@ -972,7 +1023,9 @@ int cache_add(const char *filename, uint32_t block, const char *buf,
             (unsigned long long) more_bytes_written,
             (unsigned long long) more_bytes_written + bytes_written);
 
-        cache_used_size += more_bytes_written;
+        if (!unchecked) {
+          cache_used_size += more_bytes_written;
+        }
         bytes_written += more_bytes_written;
     }
 
