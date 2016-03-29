@@ -38,7 +38,7 @@ extern bool backfs_log_stderr;
 static char *cache_dir;
 static uint64_t cache_size;
 static volatile uint64_t cache_used_size = 0;
-struct bucket_node { char path[PATH_MAX]; struct bucket_node* next; };
+struct bucket_node { uint32_t number; struct bucket_node* next; };
 static struct bucket_node * volatile to_check;
 static bool use_whole_device;
 static uint64_t bucket_max_size;
@@ -54,7 +54,7 @@ uint64_t cache_number_of_buckets(const char *root)
     while (readdir_r(dir, e, &result) == 0 && result != NULL) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
         *next = (struct bucket_node*)malloc(sizeof(struct bucket_node));
-        snprintf((*next)->path, PATH_MAX, "%s/%s/data", root, e->d_name);
+        (*next)->number = atoi(e->d_name);
         next = &((*next)->next);
         *next = NULL;
         ++total;
@@ -65,11 +65,35 @@ uint64_t cache_number_of_buckets(const char *root)
     return total;
 }
 
+/*
+ * returns the bucket number corresponding to a bucket path
+ * i.e. reads the number off the end.
+ */
+uint32_t bucket_path_to_number(const char *bucketpath)
+{
+    uint32_t number = 0;
+    size_t s = strlen(bucketpath);
+    size_t i;
+    for (i = 1; i < s; i++) {
+        char c = bucketpath[s - i];
+        if (c < '0' || c > '9') {
+            i--;
+            break;
+        }
+    }
+    for (i = s - i; i < s; i++) {
+        number *= 10;
+        number += (bucketpath[i] - '0');
+    }
+    return number;
+}
+
 bool is_unchecked(const char* path)
 {
+  uint32_t number = bucket_path_to_number(path);
   struct bucket_node* node = to_check;
   while(node) {
-    if (strcmp(node->path, path) == 0)
+    if (node->number == number)
       return true;
     node = node->next;
   }
@@ -84,18 +108,21 @@ void* check_buckets_size(void* arg)
     abort();
   }
 
+  char buf[PATH_MAX];
+
   while (to_check) {
     pthread_mutex_lock(&lock);
     bucket = to_check;
     if (bucket) {
       s.st_size = 0;
-      if (stat(bucket->path, &s) == -1 && errno != ENOENT) {
+      snprintf(buf, PATH_MAX, "%s/buckets/%u/data", cache_dir, bucket->number);
+      if (stat(buf, &s) == -1 && errno != ENOENT) {
            PERROR("stat in get_cache_used_size");
-           ERROR("\tcaused by stat(%s)\n", bucket->path);
+           ERROR("\tcaused by stat(%s)\n", buf);
            abort();
        }
-       DEBUG("bucket %s: %llu bytes\n",
-               bucket->path, (unsigned long long) s.st_size);
+       DEBUG("bucket %u: %llu bytes\n",
+               bucket->number, (unsigned long long) s.st_size);
        cache_used_size -= bucket_max_size - s.st_size;
        to_check = bucket->next;
     }
@@ -248,29 +275,6 @@ void bucket_to_head(const char *bucketpath)
 {
     DEBUG("bucket_to_head(%s)\n", bucketpath);
     fsll_to_head(cache_dir, bucketpath, "buckets/head", "buckets/tail");
-}
-
-/*
- * returns the bucket number corresponding to a bucket path
- * i.e. reads the number off the end.
- */
-uint32_t bucket_path_to_number(const char *bucketpath)
-{
-    uint32_t number = 0;
-    size_t s = strlen(bucketpath);
-    size_t i;
-    for (i = 1; i < s; i++) {
-        char c = bucketpath[s - i];
-        if (c < '0' || c > '9') {
-            i--;
-            break;
-        }
-    }
-    for (i = s - i; i < s; i++) {
-        number *= 10;
-        number += (bucketpath[i] - '0');
-    }
-    return number;
 }
 
 /*
