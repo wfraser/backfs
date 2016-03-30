@@ -25,7 +25,7 @@
 #include <limits.h>
 
 #include <pthread.h>
-static pthread_mutex_t lock;
+static pthread_mutex_t lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 
 #define BACKFS_LOG_SUBSYS "Cache"
 #include "global.h"
@@ -120,6 +120,7 @@ void* check_buckets_size(void* arg)
             if (stat(buf, &s) == -1 && errno != ENOENT) {
                 PERROR("stat in get_cache_used_size");
                 ERROR("\tcaused by stat(%s)\n", buf);
+                pthread_mutex_unlock(&lock);
                 abort();
             }
             DEBUG("bucket %u: %llu bytes\n",
@@ -130,8 +131,8 @@ void* check_buckets_size(void* arg)
         pthread_mutex_unlock(&lock);
         free(bucket);
     }
-    INFO("finished cache size check: %llu bytes used\n",
-            cache_used_size);
+   INFO("finished cache size check: %llu bytes used\n",
+           cache_used_size);
     return NULL;
 }
 
