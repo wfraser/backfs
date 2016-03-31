@@ -13,13 +13,12 @@ DEFINES=-D_FILE_OFFSET_BITS=64 \
 	-DBACKFS_VERSION="\"$(VERSION)\"" \
 	-DBACKFS_RW
 
-CFLAGS=-std=c11 -Wall -Wextra -pedantic -gstabs $(DEFINES) -I/usr/include/fuse
-LDFLAGS=-lfuse
+CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) -I/usr/include/fuse
+LDLIBS=-lfuse
 
 CFLAGS+= -Wno-format		# we use the Gnu '%m' format all over the place
 CFLAGS+= -Wno-sign-compare	# these should get fixed eventually, but there are a lot...
-
-CC = gcc
+CFLAGS+= -Wno-missing-field-initializers # don't warn about '= {0}' pattern
 
 OBJS = backfs.o fscache.o fsll.o util.o
 
@@ -28,12 +27,12 @@ all: backfs
 .SUFFIXES:
 
 %.o: %.c
-	@echo "    CC  $<"
-	@$(CC) $(CFLAGS) -c -o $@ $<
+	#@echo "    CC  $<"
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 backfs: $(OBJS)
-	@echo "  LINK  $<"
-	@$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS)
+	#@echo "  LINK  $<"
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 	@echo "Built BackFS for branch: $(BRANCH)" 
 
 clean:
