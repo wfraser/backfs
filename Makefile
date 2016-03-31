@@ -14,7 +14,7 @@ DEFINES=-D_FILE_OFFSET_BITS=64 \
 	-DBACKFS_RW
 
 CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) -I/usr/include/fuse
-LDLIBS=-lfuse
+LDLIBS=-lfuse -lpthread
 
 CFLAGS+= -Wno-format		# we use the Gnu '%m' format all over the place
 CFLAGS+= -Wno-sign-compare	# these should get fixed eventually, but there are a lot...
