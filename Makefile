@@ -27,12 +27,12 @@ all: backfs
 .SUFFIXES:
 
 %.o: %.c
-	#@echo "    CC  $<"
-	$(CC) $(CFLAGS) -c -o $@ $<
+	@echo "    CC  $<"
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
 backfs: $(OBJS)
-	#@echo "  LINK  $<"
-	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+	@echo "  LINK  $<"
+	@$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 	@echo "Built BackFS for branch: $(BRANCH)" 
 
 clean:
