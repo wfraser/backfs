@@ -2,7 +2,7 @@ PREFIX=/usr/local
 
 BRANCH=$(shell test -d .git && (git branch | grep '^*' | cut -c3-) || echo "unknown")
 
-VERSION=BackFS v0.4\
+VERSION=BackFS v0.5\
 $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai" -n1) branch $(BRANCH)\
 \nbuilt $(shell date "+%Y-%m-%d %H:%M:%S %z")\n
 
