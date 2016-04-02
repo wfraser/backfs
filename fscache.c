@@ -171,11 +171,14 @@ void cache_init(const char *a_cache_dir, uint64_t a_cache_size, uint64_t a_bucke
 
     bucket_max_size = a_bucket_max_size;
 
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, &check_buckets_size, NULL) != 0) {
-        PERROR("cache_init: error creating checked thread");
-        abort();
+    if (number_of_buckets > 0) {
+        pthread_t thread;
+        if (pthread_create(&thread, NULL, &check_buckets_size, NULL) != 0) {
+            PERROR("cache_init: error creating checked thread");
+            abort();
+        }
     }
+
 }
 
 const char * bucketname(const char *path)
