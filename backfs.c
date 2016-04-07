@@ -364,7 +364,7 @@ int backfs_readlink(const char *path, char *buf, size_t bufsize)
         ret = -errno;
         goto exit;
     }
-    buf[bufsize] = '\0';
+    buf[bytes_written] = '\0';
 
 exit:
     FREE(real);
