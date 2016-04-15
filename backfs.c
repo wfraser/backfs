@@ -1303,6 +1303,7 @@ int main(int argc, char **argv)
 
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: argument parsing failed.\n");
+        fuse_opt_free_args(&args);
         return 1;
     }
 
@@ -1317,6 +1318,7 @@ int main(int argc, char **argv)
         usage();
         fuse_opt_add_arg(&args, "-ho");
         backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+        fuse_opt_free_args(&args);
         return -1;
     }
 
@@ -1333,6 +1335,7 @@ int main(int argc, char **argv)
         usage();
         fuse_opt_add_arg(&args, "-ho");
         backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+        fuse_opt_free_args(&args);
         return -1;
     }
 
@@ -1345,12 +1348,14 @@ int main(int argc, char **argv)
     if ((d = opendir(backfs.real_root)) == NULL) {
         perror("BackFS ERROR: error checking backing filesystem");
         fprintf(stderr, "BackFS: specified as \"%s\"\n", backfs.real_root);
+        fuse_opt_free_args(&args);
         return 2;
     }
     closedir(d);
 
     if (backfs.cache_dir == NULL) {
         fprintf(stderr, "BackFS: error: you need to specify a cache location with \"-o cache\"\n");
+        fuse_opt_free_args(&args);
         return -1;
     }
 
@@ -1369,11 +1374,13 @@ int main(int argc, char **argv)
 
     if (statvfs(backfs.cache_dir, &cachedir_statvfs) == -1) {
         perror("BackFS ERROR: error checking cache dir");
+        fuse_opt_free_args(&args);
         return 3;
     }
 
     if (access(backfs.cache_dir, W_OK) == -1) {
         perror("BackFS ERROR: unable to write to cache dir");
+        fuse_opt_free_args(&args);
         return 4;
     }
 
@@ -1381,6 +1388,7 @@ int main(int argc, char **argv)
     asprintf(&buf, "%s/buckets", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache bucket directory");
+        fuse_opt_free_args(&args);
         return 5;
     }
     FREE(buf);
@@ -1388,6 +1396,7 @@ int main(int argc, char **argv)
     asprintf(&buf, "%s/map", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache map directory");
+        fuse_opt_free_args(&args);
         return 6;
     }
     FREE(buf);
@@ -1399,11 +1408,13 @@ int main(int argc, char **argv)
     if (f == NULL) {
     if (errno != ENOENT) {
             perror("BackFS ERROR: unable to open cache block size marker");
+            fuse_opt_free_args(&args);
             return 7;
         }
     } else {
         if (fscanf(f, "%llu", &cache_block_size) != 1) {
             perror("BackFS ERROR: unable to read cache block size marker");
+            fuse_opt_free_args(&args);
             return 8;
         }
         has_block_size_marker = true;
@@ -1414,6 +1425,7 @@ int main(int argc, char **argv)
         } else if (backfs.block_size != cache_block_size) {
             fprintf(stderr, "BackFS ERROR: cache was made using different block size of %llu. Unable to use specified size of %llu\n",
                     cache_block_size, backfs.block_size);
+            fuse_opt_free_args(&args);
             return 9;
         }
         fclose(f);
@@ -1428,6 +1440,7 @@ int main(int argc, char **argv)
         f = fopen(buf, "w");
         if (f == NULL) {
             perror("BackFS ERROR: unable to open cache block size marker");
+            fuse_opt_free_args(&args);
             return 10;
         }
         fprintf(f, "%llu\n", backfs.block_size);
@@ -1441,6 +1454,7 @@ int main(int argc, char **argv)
     if (device_size < backfs.cache_size) {
         fprintf(stderr, "BackFS: error: specified cache size larger than device\ndevice is %llu bytes, but %llu bytes were specified.\n",
                 (unsigned long long) device_size, backfs.cache_size);
+        fuse_opt_free_args(&args);
         return -1;
     }
 
@@ -1481,6 +1495,9 @@ int main(int argc, char **argv)
     
     printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
+    fuse_opt_free_args(&args);
+
+    pthread_exit(NULL);
 
     return 0;
 }
