@@ -1296,6 +1296,7 @@ int backfs_opt_proc(void *data, const char *arg, int key,
 
 int main(int argc, char **argv)
 {
+    int exit_code = 0;
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct statvfs cachedir_statvfs;
 
@@ -1303,8 +1304,8 @@ int main(int argc, char **argv)
 
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: argument parsing failed.\n");
-        fuse_opt_free_args(&args);
-        return 1;
+        exit_code = 1;
+        goto exit;
     }
 
     if (num_nonopt_args_read > 0) {
@@ -1318,8 +1319,8 @@ int main(int argc, char **argv)
         usage();
         fuse_opt_add_arg(&args, "-ho");
         backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
-        fuse_opt_free_args(&args);
-        return -1;
+        exit_code = -1;
+        goto exit;
     }
 
 #if 1
@@ -1335,33 +1336,41 @@ int main(int argc, char **argv)
         usage();
         fuse_opt_add_arg(&args, "-ho");
         backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
-        fuse_opt_free_args(&args);
-        return -1;
+        exit_code = -1;
+        goto exit;
     }
 
     if (backfs.real_root[0] != '/') {
         const char *rel = backfs.real_root;
-        asprintf(&backfs.real_root, "%s/%s", cwd, rel);
+        char* temp;
+        asprintf(&temp, "%s/%s", cwd, rel);
+        if (num_nonopt_args_read != 2) {
+            free(backfs.real_root);
+        }
+        backfs.real_root = temp;
     }
 
     DIR *d;
     if ((d = opendir(backfs.real_root)) == NULL) {
         perror("BackFS ERROR: error checking backing filesystem");
         fprintf(stderr, "BackFS: specified as \"%s\"\n", backfs.real_root);
-        fuse_opt_free_args(&args);
-        return 2;
+        exit_code = 2;
+        goto exit;
     }
     closedir(d);
 
     if (backfs.cache_dir == NULL) {
         fprintf(stderr, "BackFS: error: you need to specify a cache location with \"-o cache\"\n");
-        fuse_opt_free_args(&args);
-        return -1;
+        exit_code = -1;
+        goto exit;
     }
 
     if (backfs.cache_dir[0] != '/') {
         char *rel = backfs.cache_dir;
-        asprintf(&backfs.cache_dir, "%s/%s", cwd, rel);
+        char *temp;
+        asprintf(&temp, "%s/%s", cwd, rel);
+        free(backfs.cache_dir);
+        backfs.cache_dir = temp;
     }
 
     FREE(cwd);
@@ -1374,30 +1383,30 @@ int main(int argc, char **argv)
 
     if (statvfs(backfs.cache_dir, &cachedir_statvfs) == -1) {
         perror("BackFS ERROR: error checking cache dir");
-        fuse_opt_free_args(&args);
-        return 3;
+        exit_code = 3;
+        goto exit;
     }
 
     if (access(backfs.cache_dir, W_OK) == -1) {
         perror("BackFS ERROR: unable to write to cache dir");
-        fuse_opt_free_args(&args);
-        return 4;
+        exit_code = 4;
+        goto exit;
     }
 
     char *buf = NULL;
     asprintf(&buf, "%s/buckets", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache bucket directory");
-        fuse_opt_free_args(&args);
-        return 5;
+        exit_code = 5;
+        goto exit;
     }
     FREE(buf);
 
     asprintf(&buf, "%s/map", backfs.cache_dir);
     if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
         perror("BackFS ERROR: unable to create cache map directory");
-        fuse_opt_free_args(&args);
-        return 6;
+        exit_code = 6;
+        goto exit;
     }
     FREE(buf);
 	
@@ -1408,14 +1417,14 @@ int main(int argc, char **argv)
     if (f == NULL) {
     if (errno != ENOENT) {
             perror("BackFS ERROR: unable to open cache block size marker");
-            fuse_opt_free_args(&args);
-            return 7;
+            exit_code = 7;
+            goto exit;
         }
     } else {
         if (fscanf(f, "%llu", &cache_block_size) != 1) {
             perror("BackFS ERROR: unable to read cache block size marker");
-            fuse_opt_free_args(&args);
-            return 8;
+            exit_code = 8;
+            goto exit;
         }
         has_block_size_marker = true;
 		
@@ -1425,8 +1434,8 @@ int main(int argc, char **argv)
         } else if (backfs.block_size != cache_block_size) {
             fprintf(stderr, "BackFS ERROR: cache was made using different block size of %llu. Unable to use specified size of %llu\n",
                     cache_block_size, backfs.block_size);
-            fuse_opt_free_args(&args);
-            return 9;
+            exit_code = 9;
+            goto exit;
         }
         fclose(f);
         f = NULL;
@@ -1440,8 +1449,8 @@ int main(int argc, char **argv)
         f = fopen(buf, "w");
         if (f == NULL) {
             perror("BackFS ERROR: unable to open cache block size marker");
-            fuse_opt_free_args(&args);
-            return 10;
+            exit_code = 10;
+            goto exit;
         }
         fprintf(f, "%llu\n", backfs.block_size);
         fclose(f);
@@ -1454,8 +1463,8 @@ int main(int argc, char **argv)
     if (device_size < backfs.cache_size) {
         fprintf(stderr, "BackFS: error: specified cache size larger than device\ndevice is %llu bytes, but %llu bytes were specified.\n",
                 (unsigned long long) device_size, backfs.cache_size);
-        fuse_opt_free_args(&args);
-        return -1;
+        exit_code = -1;
+        goto exit;
     }
 
     bool use_whole_device = false;
@@ -1499,7 +1508,14 @@ int main(int argc, char **argv)
 
     pthread_exit(NULL);
 
-    return 0;
+exit:
+    fuse_opt_free_args(&args);
+    free(backfs.cache_dir);
+    free(backfs.real_root);
+
+    pthread_exit(NULL);
+
+    return exit_code;
 }
 
 /*
