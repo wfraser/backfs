@@ -44,6 +44,7 @@
 struct backfs { 
     char *cache_dir;
     char *real_root;
+    bool real_root_alloc;
     unsigned long long cache_size;
     unsigned long long block_size;
     bool rw;
@@ -1301,6 +1302,7 @@ int main(int argc, char **argv)
     struct statvfs cachedir_statvfs;
 
     backfs_log_level = LOG_LEVEL_WARN;
+    backfs.real_root_alloc = true;  // assume it comes from arg parsing.
 
     if (fuse_opt_parse(&args, &backfs, backfs_opts, backfs_opt_proc) == -1) {
         fprintf(stderr, "BackFS: argument parsing failed.\n");
@@ -1312,6 +1314,7 @@ int main(int argc, char **argv)
         fuse_opt_add_arg(&args, nonopt_arguments[num_nonopt_args_read - 1]);
         if (num_nonopt_args_read == 2) {
             backfs.real_root = nonopt_arguments[0];
+            backfs.real_root_alloc = false; // straight from argv now.
         }
     }
     else {
@@ -1344,10 +1347,11 @@ int main(int argc, char **argv)
         const char *rel = backfs.real_root;
         char* temp;
         asprintf(&temp, "%s/%s", cwd, rel);
-        if (num_nonopt_args_read != 2) {
+        if (backfs.real_root_alloc) {
             free(backfs.real_root);
         }
         backfs.real_root = temp;
+        backfs.real_root_alloc = true;
     }
 
     DIR *d;
@@ -1504,14 +1508,13 @@ int main(int argc, char **argv)
     
     printf("ready to go!\n");
     backfs_fuse_main(args.argc, args.argv, &BackFS_Opers);
-    fuse_opt_free_args(&args);
-
-    pthread_exit(NULL);
 
 exit:
     fuse_opt_free_args(&args);
     free(backfs.cache_dir);
-    free(backfs.real_root);
+    if (backfs.real_root_alloc) {
+        free(backfs.real_root);
+    }
 
     pthread_exit(NULL);
 
