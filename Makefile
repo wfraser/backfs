@@ -7,14 +7,14 @@ $(shell test -d .git && echo "\ngit revision" && git log --pretty="format:%h %ai
 \nbuilt $(shell date "+%Y-%m-%d %H:%M:%S %z")\n
 
 DEFINES=-D_FILE_OFFSET_BITS=64 \
-	-DFUSE_USE_VERSION=28 \
+	-DFUSE_USE_VERSION=30 \
 	-D_POSIX_C_SOURCE=201201 \
 	-D_GNU_SOURCE \
 	-DBACKFS_VERSION="\"$(VERSION)\"" \
 	-DBACKFS_RW
 
-CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) $(shell pkg-config --cflags fuse)
-LDLIBS=$(shell pkg-config --libs fuse) -lpthread
+CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) $(shell pkg-config --cflags fuse3)
+LDLIBS=$(shell pkg-config --libs fuse3) -lpthread
 
 CFLAGS+= -Wno-format		# we use the Gnu '%m' format all over the place
 CFLAGS+= -Wno-sign-compare	# these should get fixed eventually, but there are a lot...

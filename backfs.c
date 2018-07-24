@@ -1,6 +1,6 @@
 /*
  * BackFS
- * Copyright (c) 2010-2014 William R. Fraser
+ * Copyright (c) 2010-2018 William R. Fraser
  */
 
 // this needs to be first
@@ -372,7 +372,7 @@ exit:
     return ret;
 }
 
-int backfs_getattr(const char *path, struct stat *stbuf)
+int backfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     DEBUG("getattr %s\n", path);
     int ret = 0;
@@ -404,8 +404,13 @@ int backfs_getattr(const char *path, struct stat *stbuf)
         goto exit;
     }
 
-    REALPATH(real, path);
-    ret = lstat(real, stbuf);
+    if (fi == NULL) {
+        REALPATH(real, path);
+        ret = lstat(real, stbuf);
+    }
+    else {
+        ret = fstat(fi->fh, stbuf);
+    }
     
     // no write perms
     if (!backfs.rw) {
@@ -639,14 +644,21 @@ exit:
     return ret;
 }
 
-int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-        off_t offset, struct fuse_file_info *fi)
+int backfs_readdir(
+        const char *path,
+        void *buf,
+        fuse_fill_dir_t filler,
+        off_t offset,
+        struct fuse_file_info *fi,
+        enum fuse_readdir_flags flags)
 {
     DEBUG("readdir %s\n", path);
 
     if (offset != 0) {
         return EINVAL;
     }
+
+    (void) flags; // we don't support the FUSE_READDIR_PLUS flag
 
     int ret = 0;
     char *real = NULL;
@@ -663,12 +675,12 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     // fs control handle
     if (strcmp("/", path) == 0) {
-        filler(buf, ".backfs_control", NULL, 0);
-        filler(buf, ".backfs_version", NULL, 0);
+        filler(buf, ".backfs_control", NULL, 0, 0);
+        filler(buf, ".backfs_version", NULL, 0, 0);
     }
 
     while ((entry = readdir(dir)) != NULL) {
-        filler(buf, entry->d_name, NULL, 0);
+        filler(buf, entry->d_name, NULL, 0, 0);
     }
 
 exit:
@@ -676,7 +688,7 @@ exit:
     return ret;
 }
 
-int backfs_truncate(const char *path, off_t length)
+int backfs_truncate(const char *path, off_t length, struct fuse_file_info *fi)
 {
     DEBUG("truncate %s, %u\n", path, length);
 
@@ -690,8 +702,14 @@ int backfs_truncate(const char *path, off_t length)
     char *real = NULL;
 
     RW_ONLY();
-    REALPATH(real, path);
-    FORWARD(truncate, real, length);
+
+    if (fi == NULL) {
+        REALPATH(real, path);
+        FORWARD(truncate, real, length);
+    }
+    else {
+        FORWARD(ftruncate, fi->fh, length);
+    }
 
     uint32_t block = length / backfs.block_size;
     cache_try_invalidate_blocks_above(path, block);
@@ -718,7 +736,7 @@ int backfs_create(const char *path, mode_t mode, struct fuse_file_info *info)
     }
     info->fh = ret;
 
-    FORWARD(chmod, real, mode);
+    FORWARD(fchmod, info->fh, mode);
 
 exit:
     FREE(real);
@@ -809,7 +827,8 @@ enum rename_or_link { RENAME, LINK };
 static int rename_or_link_internal(
         const char *path,
         const char *path_new,
-        enum rename_or_link which)
+        enum rename_or_link which,
+        unsigned int flags)
 {
     int ret = 0;
     char *real = NULL;
@@ -828,7 +847,7 @@ static int rename_or_link_internal(
 
     switch (which) {
         case RENAME:
-            FORWARD(rename, real, real_new);
+            FORWARD(renameat2, 0, real, 0, real_new, flags);
             break;
         case LINK:
             FORWARD(link, real, real_new);
@@ -851,42 +870,54 @@ exit:
     return ret;
 }
 
-int backfs_rename(const char *path, const char *path_new)
+int backfs_rename(const char *path, const char *path_new, unsigned int flags)
 {
-    DEBUG("rename %s -> %s\n", path, path_new);
-    return rename_or_link_internal(path, path_new, RENAME);
+    DEBUG("rename %s -> %s (flags=%x)\n", path, path_new, flags);
+    return rename_or_link_internal(path, path_new, RENAME, 0);
 }
 
 int backfs_link(const char *path, const char *path_new)
 {
     DEBUG("link %s -> %s\n", path, path_new);
-    return rename_or_link_internal(path, path_new, LINK);
+    return rename_or_link_internal(path, path_new, LINK, 0);
 }
 
-int backfs_chmod(const char *path, mode_t mode)
+int backfs_chmod(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     DEBUG("chmod %s 0%o\n", path, mode);
     int ret = 0;
     char *real = NULL;
 
     RW_ONLY();
-    REALPATH(real, path);
-    FORWARD(chmod, real, mode);
+
+    if (fi == NULL) {
+        REALPATH(real, path);
+        FORWARD(chmod, real, mode);
+    }
+    else {
+        FORWARD(fchmod, fi->fh, mode);
+    }
 
 exit:
     FREE(real);
     return ret;
 }
 
-int backfs_chown(const char *path, uid_t uid, gid_t gid)
+int backfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi)
 {
     DEBUG("chown %s %d:%d\n", path, uid, gid);
     int ret = 0;
     char *real = NULL;
 
     RW_ONLY();
-    REALPATH(real, path);
-    FORWARD(chown, real, uid, gid);
+
+    if (fi == NULL) {
+        REALPATH(real, path);
+        FORWARD(chown, real, uid, gid);
+    }
+    else {
+        FORWARD(fchown, fi->fh, uid, gid);
+    }
 
 exit:
     FREE(real);
@@ -894,15 +925,21 @@ exit:
 }
 
 #ifdef HAVE_UTIMENS
-int backfs_utimens(const char *path, const struct timespec tv[2])
+int backfs_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
     DEBUG("utimens %s\n", path);
     int ret = 0;
     char *real = NULL;
 
     RW_ONLY();
-    REALPATH(real, path);
-    FORWARD(utimensat, 0, real, tv, 0);
+
+    if (fi == NULL) {
+        REALPATH(real, path);
+        FORWARD(utimensat, 0, real, tv, 0);
+    }
+    else {
+        FORWARD(futimens, fi->fh, tv);
+    }
 
 exit:
     FREE(real);
@@ -1147,6 +1184,7 @@ STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, 
 STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
 STUB(flock, struct fuse_file_info *ffi, int op)
 STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
+STUB(mknod, char *name, mode_t mode, dev_t dev)
 #endif
 
 #define IMPL(func) .func = backfs_##func
@@ -1177,7 +1215,8 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(ioctl),
     IMPL(poll),
     IMPL(flock),
-//    IMPL(fallocate),  // pretty new; a lot of FUSE installs don't have this yet.
+    IMPL(fallocate),
+    IMPL(mknod),
 #endif
 #endif
     IMPL(open),
@@ -1187,14 +1226,12 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(releasedir),
     IMPL(getattr),
     IMPL(access),
-    IMPL(write),
+    IMPL(write),        // used in read-only builds for fake files
     IMPL(readlink),
-    IMPL(truncate),
+    IMPL(truncate),     // used in read-only builds for fake files
     IMPL(release),
     IMPL(getxattr),
     IMPL(listxattr),
-//  IMPL(ftruncate)     // redundant, use truncate instead
-//  IMPL(fgetattr),     // redundant, use getattr instead
 //  IMPL(read_buf),     // use read instead
 //  IMPL(write_buf),    // use write instead
 };
