@@ -86,10 +86,10 @@ Options
 Requirements
 ------------
 
-* [FUSE](http://fuse.sourceforge.net/) version 2.8 or greater.
-* An operating system that FUSE supports. 
+* [FUSE](https://github.com/libfuse/libfuse) version 3 or greater. (libfuse 3.2.4 is the earliest tested version)
+* An operating system that fuse3 supports.
  
-Linux 2.6 and 3.x are the only operating systems I've tested, but others might work; nothing in the implementation is particularly tied to Linux versus other UNIXes.
+Linux is the only operating system I've tested, but others might work; nothing in the implementation is particularly tied to Linux versus other UNIXes.
 
 Installation
 ------------
@@ -201,7 +201,7 @@ Todo List
 License
 -------
 
-BackFS copyright (c) 2010-2011 William R. Fraser
+BackFS copyright (c) 2010-2018 William R. Fraser
 
 BackFS is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
 
