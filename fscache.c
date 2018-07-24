@@ -47,11 +47,10 @@ uint64_t prepare_buckets_size_check(const char *root)
 {
     INFO("taking inventory of cache directory\n");
     uint64_t total = 0;
-    struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
-    struct dirent *result = e;
     DIR *dir = opendir(root);
     struct bucket_node* volatile * next = &to_check;
-    while (readdir_r(dir, e, &result) == 0 && result != NULL) {
+    struct dirent *e = NULL;
+    while ((e = readdir(dir)) != NULL) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
         *next = (struct bucket_node*)malloc(sizeof(struct bucket_node));
         (*next)->number = atoi(e->d_name);
@@ -60,7 +59,6 @@ uint64_t prepare_buckets_size_check(const char *root)
         ++total;
     }
     closedir(dir);
-    FREE(e);
 
     return total;
 }
@@ -304,7 +302,7 @@ void trim_directory(const char *path)
     while ((strcmp(dir, map) != 0) && (strcmp(dir, buckets) != 0)) {
     
         DIR *d = opendir(dir);
-        struct dirent *e;
+        struct dirent *e = NULL;
         bool found_mtime = false;
         while ((e = readdir(d)) != NULL) {
             if (e->d_name[0] == '.')
@@ -462,9 +460,8 @@ int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
         return -errno;
     }
 
-    struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
-    struct dirent *result = e;
-    while (readdir_r(d, e, &result) == 0 && result != NULL) {
+    struct dirent *e = NULL;
+    while ((e = readdir(d)) != NULL) {
         // probably not needed, because trim_directory would take care of the
         // mtime file, but might as well do it now to save time.
         if (strcmp(e->d_name, "mtime") == 0) {
@@ -486,7 +483,6 @@ int cache_invalidate_file_real(const char *filename, bool error_if_not_exist)
         FREE(bucket);
     }
 
-    FREE(e);
     closedir(d);
 
     return 0;
@@ -554,7 +550,6 @@ int cache_try_invalidate_blocks_above(const char *filename, uint32_t block)
     int ret = 0;
     DIR *mapdir = NULL;
     bool locked = false;
-    struct dirent *e = NULL;
 
     char mappath[PATH_MAX];
     snprintf(mappath, PATH_MAX, "%s/map%s", cache_dir, filename);
@@ -568,9 +563,8 @@ int cache_try_invalidate_blocks_above(const char *filename, uint32_t block)
         goto exit;
     }
 
-    e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
-    struct dirent *result = e;
-    while ((readdir_r(mapdir, e, &result) == 0) && (result != NULL)) {
+    struct dirent *e = NULL;
+    while ((e = readdir(mapdir)) != NULL) {
         if ((e->d_name[0] < '0') || (e->d_name[0] > '9')) continue;
 
         uint32_t block_found;
@@ -585,7 +579,6 @@ int cache_try_invalidate_blocks_above(const char *filename, uint32_t block)
 
 exit:
     closedir(mapdir);
-    FREE(e);
     if (locked)
         pthread_mutex_unlock(&lock);
     return ret;
@@ -605,9 +598,8 @@ int cache_free_orphan_buckets(void)
         return -1*errno;
     }
 
-    struct dirent *e = malloc(offsetof(struct dirent, d_name) + PATH_MAX + 1);
-    struct dirent *result = e;
-    while (readdir_r(d, e, &result) == 0 && result != NULL) {
+    struct dirent *e = NULL;
+    while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
 
         char bucketpath[PATH_MAX];
@@ -628,7 +620,6 @@ int cache_free_orphan_buckets(void)
     }
 
     closedir(d);
-    FREE(e);
     pthread_mutex_unlock(&lock);
 
     return 0;

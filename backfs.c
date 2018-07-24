@@ -651,6 +651,7 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     int ret = 0;
     char *real = NULL;
     DIR *dir = (DIR*)(intptr_t)(fi->fh);
+    struct dirent *entry = NULL;
 
     if (dir == NULL) {
         ERROR("got null dir handle");
@@ -666,17 +667,9 @@ int backfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         filler(buf, ".backfs_version", NULL, 0);
     }
 
-    int res;
-    struct dirent *entry = malloc(offsetof(struct dirent, d_name) + max_filename_length(real) + 1);
-    if (entry == NULL) {
-        ret = -ENOMEM;
-        goto exit;
+    while ((entry = readdir(dir)) != NULL) {
+        filler(buf, entry->d_name, NULL, 0);
     }
-    struct dirent *rp;
-    while ((res = readdir_r(dir, entry, &rp) == 0) && (rp != NULL)) {
-        filler(buf, rp->d_name, NULL, 0);
-    }
-    free(entry);
 
 exit:
     FREE(real);

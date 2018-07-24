@@ -5,7 +5,6 @@
  * Copyright (c) 2014 William R. Fraser
  */
 
-size_t max_filename_length(const char* path);
 char* areadlink(const char* path);
 
 #define FREE(var) { free(var); var = NULL; }
