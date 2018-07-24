@@ -811,45 +811,64 @@ exit:
     return ret;
 }
 
-// These two functions work in exactly the same way.
-#define BACKFS_RENAME_OR_LINK(rename_or_link, id) \
-int backfs_##rename_or_link(const char *path, const char *path_new) \
-{ \
-    DEBUG(#rename_or_link " %s -> %s\n", path, path_new); \
-    int ret = 0; \
-    char *real = NULL; \
-    char *real_new = NULL; \
-    bool locked = false; \
-    \
-    RW_ONLY(); \
-    \
-    REALPATH(real, path); \
-    REALPATH(real_new, path_new); \
-    \
-    if (id == 0) \
-        locked = true; \
-        pthread_mutex_lock(&backfs.lock); \
-    \
-    FORWARD(rename_or_link, real, real_new); \
-    \
-    if (id == 0) { \
-        int cache_ret = cache_rename(path, path_new); \
-        if (cache_ret != 0) { \
-            FORWARD(rename, real_new, real); \
-            ret = cache_ret; \
-        } \
-    } \
-\
-exit: \
-    if (id == 0 && locked) \
-        pthread_mutex_unlock(&backfs.lock); \
-    FREE(real); \
-    FREE(real_new);\
-    return ret; \
+enum rename_or_link { RENAME, LINK };
+
+static int rename_or_link_internal(
+        const char *path,
+        const char *path_new,
+        enum rename_or_link which)
+{
+    int ret = 0;
+    char *real = NULL;
+    char *real_new = NULL;
+    bool locked = false;
+
+    RW_ONLY();
+
+    REALPATH(real, path);
+    REALPATH(real_new, path_new);
+
+    if (which == RENAME) {
+        pthread_mutex_lock(&backfs.lock);
+        locked = true;
+    }
+
+    switch (which) {
+        case RENAME:
+            FORWARD(rename, real, real_new);
+            break;
+        case LINK:
+            FORWARD(link, real, real_new);
+            break;
+    }
+
+    if (which == RENAME) {
+        int cache_ret = cache_rename(path, path_new);
+        if (cache_ret != 0) {
+            FORWARD(rename, real_new, real); // undo the rename
+            ret = cache_ret;
+        }
+    }
+
+exit:
+    if (locked)
+        pthread_mutex_unlock(&backfs.lock);
+    FREE(real);
+    FREE(real_new);
+    return ret;
 }
 
-BACKFS_RENAME_OR_LINK(rename, 0)
-BACKFS_RENAME_OR_LINK(link, 1)
+int backfs_rename(const char *path, const char *path_new)
+{
+    DEBUG("rename %s -> %s\n", path, path_new);
+    return rename_or_link_internal(path, path_new, RENAME);
+}
+
+int backfs_link(const char *path, const char *path_new)
+{
+    DEBUG("link %s -> %s\n", path, path_new);
+    return rename_or_link_internal(path, path_new, LINK);
+}
 
 int backfs_chmod(const char *path, mode_t mode)
 {
