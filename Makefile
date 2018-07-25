@@ -13,8 +13,8 @@ DEFINES=-D_FILE_OFFSET_BITS=64 \
 	-DBACKFS_VERSION="\"$(VERSION)\"" \
 	-DBACKFS_RW
 
-CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) $(shell pkg-config --cflags fuse3)
-LDLIBS=$(shell pkg-config --libs fuse3) -lpthread
+CFLAGS+=-std=c11 -Wall -Wextra -pedantic $(DEFINES) $(shell pkg-config --cflags fuse)
+LDLIBS=$(shell pkg-config --libs fuse) -lpthread
 
 CFLAGS+= -Wno-format		# we use the Gnu '%m' format all over the place
 CFLAGS+= -Wno-sign-compare	# these should get fixed eventually, but there are a lot...

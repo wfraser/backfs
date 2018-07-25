@@ -644,21 +644,36 @@ exit:
     return ret;
 }
 
-int backfs_readdir(
+// FUSE3 adds a flags parameter to the directory filler function, which we don't use at all.
+// for compatibility with FUSE2, define a wrapper function that doesn't take the flags parameter,
+// and calls the filler function for whichever version.
+
+static int filler_compat(
+        fuse_fill_dir_t real_filler,
+        void *buf,
+        const char *name,
+        const struct stat *stbuf,
+        off_t off)
+{
+#ifdef FUSE3
+    return real_filler(buf, name, stbuf, off, 0);
+#else
+    return real_filler(buf, name, stbuf, off);
+#endif
+}
+
+static int backfs_readdir_internal(
         const char *path,
         void *buf,
         fuse_fill_dir_t filler,
         off_t offset,
-        struct fuse_file_info *fi,
-        enum fuse_readdir_flags flags)
+        struct fuse_file_info *fi)
 {
     DEBUG("readdir %s\n", path);
 
     if (offset != 0) {
         return EINVAL;
     }
-
-    (void) flags; // we don't support the FUSE_READDIR_PLUS flag
 
     int ret = 0;
     char *real = NULL;
@@ -675,18 +690,42 @@ int backfs_readdir(
 
     // fs control handle
     if (strcmp("/", path) == 0) {
-        filler(buf, ".backfs_control", NULL, 0, 0);
-        filler(buf, ".backfs_version", NULL, 0, 0);
+        filler_compat(filler, buf, ".backfs_control", NULL, 0);
+        filler_compat(filler, buf, ".backfs_version", NULL, 0);
     }
 
     while ((entry = readdir(dir)) != NULL) {
-        filler(buf, entry->d_name, NULL, 0, 0);
+        filler_compat(filler, buf, entry->d_name, NULL, 0);
     }
 
 exit:
     FREE(real);
     return ret;
 }
+
+#ifdef FUSE3
+int backfs_readdir(
+        const char *path,
+        void *buf,
+        fuse_fill_dir_t filler,
+        off_t offset,
+        struct fuse_file_info *fi,
+        enum fuse_readdir_flags flags)
+{
+    (void) flags; // we don't support the FUSE_READDIR_PLUS flag
+    return backfs_readdir_internal(path, buf, filler, offset, fi);
+}
+#else
+int backfs_readdir(
+        const char *path,
+        void *buf,
+        fuse_fill_dir_t filler,
+        off_t offset,
+        struct fuse_file_info *fi)
+{
+    return backfs_readdir_internal(path, buf, filler, offset, fi);
+}
+#endif
 
 int backfs_truncate(const char *path, off_t length, struct fuse_file_info *fi)
 {
@@ -1174,6 +1213,8 @@ int backfs_##func(const char *path, __VA_ARGS__) \
     return -ENOSYS; \
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 STUB(statfs, struct statvfs *stat)
 STUB(flush, struct fuse_file_info *ffi)
 STUB(fsync, int n, struct fuse_file_info *ffi)
@@ -1184,10 +1225,51 @@ STUB(ioctl, int cmd, void *arg, struct fuse_file_info *ffi, unsigned int flags, 
 STUB(poll, struct fuse_file_info *ffi, struct fuse_pollhandle *ph, unsigned *reventsp)
 STUB(flock, struct fuse_file_info *ffi, int op)
 STUB(fallocate, int a, off_t b, off_t c, struct fuse_file_info *ffi)
-STUB(mknod, char *name, mode_t mode, dev_t dev)
+STUB(mknod, mode_t mode, dev_t dev)
+#pragma GCC diagnostic pop
 #endif
 
 #define IMPL(func) .func = backfs_##func
+
+#ifdef FUSE3
+#   define IMPL_COMPAT(func) .func = backfs_##func
+#   define COMPAT(func, ...)
+#else
+#   define IMPL_COMPAT(func) .func = backfs_##func##_compat
+
+int backfs_rename_compat(const char *path, const char *path_new)
+{
+    return backfs_rename(path, path_new, 0);
+}
+
+int backfs_chmod_compat(const char *path, mode_t mode)
+{
+    return backfs_chmod(path, mode, NULL);
+}
+
+int backfs_chown_compat(const char *path, uid_t uid, gid_t gid)
+{
+    return backfs_chown(path, uid, gid, NULL);
+}
+
+#ifdef HAVE_UTIMENS
+int backfs_utimens_compat(const char *path, const struct timespec tv[2])
+{
+    return backfs_utimens(path, tv, NULL);
+}
+#endif
+
+int backfs_getattr_compat(const char *path, struct stat *stbuf)
+{
+    return backfs_getattr(path, stbuf, NULL);
+}
+
+int backfs_truncate_compat(const char *path, off_t length)
+{
+    return backfs_truncate(path, length, NULL);
+}
+
+#endif
 
 static struct fuse_operations BackFS_Opers = {
 #ifdef BACKFS_RW
@@ -1195,15 +1277,15 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(unlink),
     IMPL(rmdir),
     IMPL(symlink),
-    IMPL(rename),
+    IMPL_COMPAT(rename),
     IMPL(link),
-    IMPL(chmod),
-    IMPL(chown),
+    IMPL_COMPAT(chmod),
+    IMPL_COMPAT(chown),
     IMPL(setxattr),
     IMPL(removexattr),
     IMPL(create),
 #ifdef HAVE_UTIMENS
-    IMPL(utimens),
+    IMPL_COMPAT(utimens),
 #endif
 #ifdef STUB_FUNCTIONS
     IMPL(fsyncdir),
@@ -1224,11 +1306,11 @@ static struct fuse_operations BackFS_Opers = {
     IMPL(opendir),
     IMPL(readdir),
     IMPL(releasedir),
-    IMPL(getattr),
+    IMPL_COMPAT(getattr),
     IMPL(access),
     IMPL(write),        // used in read-only builds for fake files
     IMPL(readlink),
-    IMPL(truncate),     // used in read-only builds for fake files
+    IMPL_COMPAT(truncate),  // used in read-only builds for fake files
     IMPL(release),
     IMPL(getxattr),
     IMPL(listxattr),
