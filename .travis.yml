@@ -8,7 +8,7 @@ matrix:
                       - ubuntu-toolchain-r-test
                   packages:
                       - gcc-5
-                      - libfuse-dev
+                      - libfuse3-dev
           env: COMPILER=gcc-5
         - compiler: clang
           addons:
@@ -18,7 +18,7 @@ matrix:
                       - llvm-toolchain-precise-3.7
                   packages:
                       - clang-3.7
-                      - libfuse-dev
+                      - libfuse3-dev
           env: COMPILER=clang
 script:
     - $COMPILER --version
